@@ -8,3 +8,6 @@ pub const POOL_AUTHORITY:&str = "pool_authority";
 
 #[constant]
 pub const LOCKED_LP:u64 = 100;
+
+#[constant]
+pub const SWAP_FEES_DENOMINATION:u32 = 1_000_000;

@@ -19,5 +19,21 @@ pub enum ErrorCode {
     InsufficientFunds,
 
     #[msg("NotEnoughLiquidity")]
-    NotEnoughLiquidity
+    NotEnoughLiquidity,
+
+    #[msg("InvalidPool")]
+    InvalidPool,
+
+    #[msg("InvalidInputAmount")]
+    InvalidInputAmount,
+
+
+    #[msg("InvalidFees")]
+    InvalidFees,
+
+    #[msg("MathOverflow")]
+    MathOverflow,
+
+    #[msg("FailedToExceedMinimum")]
+    FailedToExceedMinimum
 }

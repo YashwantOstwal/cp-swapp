@@ -84,23 +84,24 @@ pub struct Deposit<'info>{
 
 pub fn deposit_handler(ctx:Context<Deposit>,fees_in_ppm:u32,lp_tokens_required:u64, max_deposit_a:u64,max_deposit_b:u64)->Result<()>{
     // Provided the number of lp tokens required by the lp, we must calculate the tokens of mint a and mint b to be deposited to the pool to be able to mint lp_mint_required amount of tokens.
-    // LP tokens = (deposit / reserve) * lp supply.
-    // (lp tokens * reserve_a)  / lp supply  is the net deposit post tax charged by mint if mint is owned by token 2022 and has TransferFeeConfig extension.
-    let (net_deposit_a,net_deposit_b) = (calculate_deposit(lp_tokens_required, ctx.accounts.lp_mint.supply, ctx.accounts.token_a_vault.amount)?,calculate_deposit(lp_tokens_required, ctx.accounts.lp_mint.supply, ctx.accounts.token_b_vault.amount)?);
+    // LP tokens = deposit / reserve * lp supply.
+    // (lp tokens * reserve_a ) / lp supply  is the net deposit post tax charged by the mint if mint is owned by token 2022 and has TransferFeeConfig extension enabled.
+    let (net_deposit_a,net_deposit_b) = (calculate_deposit(lp_tokens_required, ctx.accounts.lp_mint.supply + LOCKED_LP, ctx.accounts.token_a_vault.amount)?,calculate_deposit(lp_tokens_required, ctx.accounts.lp_mint.supply + LOCKED_LP, ctx.accounts.token_b_vault.amount)?);
     
     // we have to calculate the inverse transfer fees for the above result and the resultant is less than or equal to the max deposit of each token.
     let (transfer_fee_a,transfer_fee_b) = (get_inverse_transfer_fee(&ctx.accounts.mint_a, net_deposit_a)?,get_inverse_transfer_fee(&ctx.accounts.mint_b, net_deposit_b)?);
 
     // Then transfer the tokens from lp_token accounts to pool reserves and mint the required lp_mint_required tokens to the lp token account.
     let (gross_deposit_a,gross_deposit_b) = (net_deposit_a.checked_add(transfer_fee_a).unwrap()
-    ,net_deposit_b.checked_add(transfer_fee_b).unwrap());
-    
+    ,net_deposit_b.checked_add(transfer_fee_b).unwrap()); 
+
     require_gte!(max_deposit_a,gross_deposit_a,ErrorCode::InsufficientFunds);
     require_gte!(max_deposit_b,gross_deposit_b,ErrorCode::InsufficientFunds);
 
     let mint_a_pubkey = ctx.accounts.mint_a.key();
     let mint_b_pubkey = ctx.accounts.mint_b.key();
     let fees_in_ppm_bytes = fees_in_ppm.to_le_bytes();
+
     let pool_authority_seeds : &[&[u8]] = &[POOL_AUTHORITY.as_bytes(),mint_a_pubkey.as_ref(),mint_b_pubkey.as_ref(),fees_in_ppm_bytes.as_ref()];
     let signer_seeds = &[&pool_authority_seeds[..]];
 
@@ -109,8 +110,8 @@ pub fn deposit_handler(ctx:Context<Deposit>,fees_in_ppm:u32,lp_tokens_required:u
         to:ctx.accounts.lp_token.to_account_info(),
         authority:ctx.accounts.authority.to_account_info()
     }).with_signer(signer_seeds);
-    mint_to_checked(mint_to_ctx, lp_tokens_required, ctx.accounts.lp_mint.decimals)?;
 
+    mint_to_checked(mint_to_ctx, lp_tokens_required, ctx.accounts.lp_mint.decimals)?;
 
     let transfer_token_a_ctx = CpiContext::new(ctx.accounts.token_a_program.key(),TransferCheckedWithFee {
         token_program_id:ctx.accounts.token_a_program.to_account_info(),
@@ -119,8 +120,8 @@ pub fn deposit_handler(ctx:Context<Deposit>,fees_in_ppm:u32,lp_tokens_required:u
         authority:ctx.accounts.lp.to_account_info(),
         mint:ctx.accounts.mint_a.to_account_info()
     });
-    transfer_checked_with_fee(transfer_token_a_ctx, gross_deposit_a, ctx.accounts.mint_a.decimals, transfer_fee_a)?;
 
+    transfer_checked_with_fee(transfer_token_a_ctx, gross_deposit_a, ctx.accounts.mint_a.decimals, transfer_fee_a)?;
 
     let transfer_token_b_ctx = CpiContext::new(ctx.accounts.token_b_program.key(),TransferCheckedWithFee {
         token_program_id:ctx.accounts.token_b_program.to_account_info(),
@@ -131,9 +132,6 @@ pub fn deposit_handler(ctx:Context<Deposit>,fees_in_ppm:u32,lp_tokens_required:u
     });
     
     transfer_checked_with_fee(transfer_token_b_ctx, gross_deposit_b, ctx.accounts.mint_b.decimals, transfer_fee_b)?;
-
-
-    
 
     Ok(())
 }

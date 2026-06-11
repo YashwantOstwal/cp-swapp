@@ -18,7 +18,7 @@ use anchor_spl::{
     }
 };
 
-use crate::{LOCKED_LP, constants::{POOL_AUTHORITY, POOL_LP_MINT}, error::ErrorCode};
+use crate::{LOCKED_LP, SWAP_FEES_DENOMINATION, constants::{POOL_AUTHORITY, POOL_LP_MINT}, error::ErrorCode};
 
 #[derive(Accounts)]
 #[instruction(fees_in_ppm:u32)]
@@ -111,6 +111,7 @@ pub struct Initialize<'info>{
 
 pub fn initialize_handler(ctx:Context<Initialize>,fees_in_ppm:u32,net_init_amount_a:u64,net_init_amount_b:u64)->Result<()>{
 
+    require_gt!(SWAP_FEES_DENOMINATION,fees_in_ppm,ErrorCode::InvalidFees);
     require!(is_supported_mint(&ctx.accounts.mint_a)? && is_supported_mint(&ctx.accounts.mint_b)?, ErrorCode::AtleastOneOfTheMintsNotSupported);
     let (transfer_fee_a,transfer_fee_b) = (get_inverse_transfer_fee(&ctx.accounts.mint_a, net_init_amount_a)?,get_inverse_transfer_fee(&ctx.accounts.mint_b, net_init_amount_b)?);
 
