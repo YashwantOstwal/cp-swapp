@@ -86,7 +86,7 @@ pub fn deposit_handler(ctx:Context<Deposit>,fees_in_ppm:u32,lp_tokens_required:u
     // Provided the number of lp tokens required by the lp, we must calculate the tokens of mint a and mint b to be deposited to the pool to be able to mint lp_mint_required amount of tokens.
     // LP tokens = deposit / reserve * lp supply.
     // (lp tokens * reserve_a ) / lp supply  is the net deposit post tax charged by the mint if mint is owned by token 2022 and has TransferFeeConfig extension enabled.
-    let (net_deposit_a,net_deposit_b) = (calculate_deposit(lp_tokens_required, ctx.accounts.lp_mint.supply + LOCKED_LP, ctx.accounts.token_a_vault.amount)?,calculate_deposit(lp_tokens_required, ctx.accounts.lp_mint.supply + LOCKED_LP, ctx.accounts.token_b_vault.amount)?);
+    let (net_deposit_a,net_deposit_b) = (calculate_deposit(lp_tokens_required, ctx.accounts.lp_mint.supply + MINIMUM_LIQUIDITY, ctx.accounts.token_a_vault.amount)?,calculate_deposit(lp_tokens_required, ctx.accounts.lp_mint.supply + MINIMUM_LIQUIDITY, ctx.accounts.token_b_vault.amount)?);
     
     // we have to calculate the inverse transfer fees for the above result and the resultant is less than or equal to the max deposit of each token.
     let (transfer_fee_a,transfer_fee_b) = (get_inverse_transfer_fee(&ctx.accounts.mint_a, net_deposit_a)?,get_inverse_transfer_fee(&ctx.accounts.mint_b, net_deposit_b)?);

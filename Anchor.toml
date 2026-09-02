@@ -6,7 +6,7 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-cp_swapp = "7SghMcfPqxKxVbrpMtEJ7rR24g2Cjbzm82C14wo3pqFy"
+cp_swap = "8FtgY3WxHTFMJP7AZKhBZHF1KiSDZ6SBbbxLK1wpAcBo"
 
 [provider]
 cluster = "localnet"
@@ -14,5 +14,5 @@ wallet = "~/.config/solana/id.json"
 
 [scripts]
 test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 \"tests/**/*.ts\""
-litesvm-test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 \"tests/litesvm-test.ts\""
+
 [hooks]

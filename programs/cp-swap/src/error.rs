@@ -35,5 +35,19 @@ pub enum ErrorCode {
     MathOverflow,
 
     #[msg("FailedToExceedMinimum")]
-    FailedToExceedMinimum
+    FailedToExceedMinimum,
+
+
+    #[msg("")]
+    MismatchUpdateAuthority,
+
+    #[msg("")]
+    AmmConfigDisabledForPoolCreation,
+
+    #[msg("")]
+    Mint1LexicographicallyGreaterThanOrEqualToMint0,
+
+    #[msg("")]
+    InsufficientLiquidity,
+
 }
