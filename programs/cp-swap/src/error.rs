@@ -50,4 +50,12 @@ pub enum ErrorCode {
     #[msg("")]
     InsufficientLiquidity,
 
+    #[msg("")]
+    MismatchAccounts,
+
+    #[msg("")]
+    NotMinimumOutputAmount,
+
+    #[msg("")]
+    ConstantProductInvariantFailed,
 }

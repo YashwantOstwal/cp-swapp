@@ -1,188 +1,153 @@
-// use std::char::MAX;
+use anchor_lang::prelude::*;
+use anchor_spl::{token::{Token},token_2022::spl_token_2022::{self, extension::{transfer_fee::TransferFeeConfig, BaseStateWithExtensions, StateWithExtensions}}, token_interface::{Mint, TokenAccount, TokenInterface,transfer_checked,TransferChecked}};
 
-// use anchor_lang::prelude::*;
-// use anchor_spl::{
-//     associated_token::AssociatedToken, token::Token, token_2022::spl_token_2022::{self,
-//             extension::{BaseStateWithExtensions, StateWithExtensions, transfer_fee::{MAX_FEE_BASIS_POINTS, TransferFeeConfig}}
-//         }, token_interface::{
-//         Mint, TokenAccount, TokenInterface, TransferCheckedWithFee,transfer_checked_with_fee
-//     }
-// };
+use crate::{states::*,error::ErrorCode};
 
-// use crate::*;
-// use crate::error::ErrorCode;
+#[derive(Accounts)]
+pub struct SwapBaseInput<'info> {
 
+    pub trader: Signer<'info>,
 
-// #[derive(Accounts)]
-// #[instruction(fees_in_ppm:u32)]
-// pub struct SwapBaseInput<'info>{
-//     #[account(mut)]
-//     pub owner:Signer<'info>,
+    pub amm_config: Box<Account<'info,AmmConfig>>,
 
-//     #[account(
-//         mint::token_program = input_token_program,
-//         mint::authority = authority
-//     )]
-//     pub input_mint:InterfaceAccount<'info,Mint>,
+    #[account(
+        constraint = (input_mint.key() == pool.mint_0 && output_mint.key() ==  pool.mint_1) || (input_mint.key() == pool.mint_1 && output_mint.key() ==  pool.mint_0) @ ErrorCode::MismatchAccounts
+    )]
+    pub pool: Account<'info,Pool>,
 
-//     #[account(
-//         mint::token_program = output_token_program,
-//         mint::authority = authority,
-//     )]
-//     pub output_mint:InterfaceAccount<'info,Mint>,
+    #[account(
+        mut,
+        token::authority = trader,
+        token::mint = input_mint,
+        token::token_program = input_token_program,
+    )]
+    pub trader_input_token:InterfaceAccount<'info,TokenAccount>,
 
-//     #[account(
-//         seeds = [POOL_AUTHORITY.as_bytes(),pool_state.key().as_ref()],
-//         bump,
-//     )]
-//     pub authority: SystemAccount<'info>,
+    #[account(
+        mut,
+        associated_token::authority = pool,
+        associated_token::mint = input_mint,
+        associated_token::token_program = input_token_program,
+    )]
+    pub input_token_vault:InterfaceAccount<'info,TokenAccount>,
 
-//     #[account(
-//         constraint = (pool_state.mint_a == input_mint.key() && pool_state.mint_b == output_mint.key() ) ||( pool_state.mint_b == input_mint.key() && pool_state.mint_a == output_mint.key() && pool_state.fees_in_ppm == fees_in_ppm)  @ErrorCode::InvalidPool,
-//     )]
-//     pool_state:Account<'info,Pool>,
+    #[account(
+        mint::token_program = input_token_program
+    )]
+    pub input_mint:InterfaceAccount<'info,Mint>,
+    pub input_token_program:Interface<'info,TokenInterface>,
 
-//     #[account(
-//         mut,
-//         associated_token::mint = input_mint,
-//         associated_token::authority = owner,
-//         associated_token::token_program = input_token_program
-//     )]
-//     pub owner_input_token:InterfaceAccount<'info,TokenAccount>,
+    #[account(
+        mut,
+        token::authority = trader,
+        token::mint = output_mint,
+        token::token_program = output_token_program,
+    )]
+    pub trader_output_token:InterfaceAccount<'info,TokenAccount>,
 
-//     #[account(
-//         init_if_needed,
-//         payer = owner,
-//         associated_token::mint = output_mint,
-//         associated_token::authority = owner,
-//         associated_token::token_program = output_token_program
-//     )]
-//     pub owner_output_token:InterfaceAccount<'info,TokenAccount>,
+    #[account(
+        mut,
+        associated_token::authority = pool,
+        associated_token::mint = output_mint,
+        associated_token::token_program = output_token_program,
+    )]
+    pub output_token_vault:InterfaceAccount<'info,TokenAccount>,
 
-//     #[account(
-//         mut,
-//         associated_token::mint = input_mint,
-//         associated_token::authority = authority,
-//         associated_token::token_program = input_token_program,
-//     )]
-//     pub input_token_vault:InterfaceAccount<'info,TokenAccount>,
+    #[account(
+        mint::token_program = output_token_program
+    )]
+    pub output_mint:InterfaceAccount<'info,Mint>,
+    pub output_token_program:Interface<'info,TokenInterface>,
+}
 
-//     #[account(
-//         mut,
-//         associated_token::mint = output_mint,
-//         associated_token::authority = authority,
-//         associated_token::token_program = output_token_program
-//     )]
-//     pub output_token_vault:InterfaceAccount<'info,TokenAccount>,
-//     pub system_program:Program<'info,System>,
-//     pub associated_token_program:Program<'info,AssociatedToken>,
-//     pub input_token_program:Interface<'info,TokenInterface>,
-//     pub output_token_program:Interface<'info,TokenInterface>,
-    
-// }
+pub fn handle_swap_base_input(ctx:Context<SwapBaseInput>,exact_input_amount:u64,minimum_output_amount:u64) -> Result<()> {
 
-// pub fn swap_base_input_handler(ctx:Context<SwapBaseInput>,fees_in_ppm:u32,exact_input_amount:u64,min_output_amount:u64)->Result<()>{
+    let trader_input_token = &ctx.accounts.trader_input_token;
+    require!(exact_input_amount <= trader_input_token.amount ,ErrorCode::InsufficientFunds);
 
-//     require_gt!(exact_input_amount,0,ErrorCode::InvalidInputAmount);
+    let input_mint = &ctx.accounts.input_mint;
+    let net_input_amount = if ctx.accounts.input_token_program.key() == Token::id() {
+        exact_input_amount
+    }else {
+        let input_mint_info = input_mint.to_account_info();
+        let input_mint_data = input_mint_info.try_borrow_data()?;
+        let input_mint_state = StateWithExtensions::<spl_token_2022::state::Mint>::unpack(&input_mint_data)?;
+        if let Ok(transfer_fee_config) = input_mint_state.get_extension::<TransferFeeConfig>() {
+            let clock = Clock::get()?;
+            let transfer_fee = transfer_fee_config.get_epoch_fee(clock.epoch);
+            transfer_fee.calculate_post_fee_amount(exact_input_amount).unwrap()
+        }else {
+            exact_input_amount
+        }
+    };
+    let amm_config = &ctx.accounts.amm_config;
+    let curve_input_amount = if amm_config.fee_side_input {
+        amm_config.calculate_post_fee_amount(net_input_amount)
+    }else {
+        net_input_amount
+    };
 
-//     // Calculating the net input amount.
-//     let input_transfer_fee = get_transfer_fees(&ctx.accounts.input_mint, exact_input_amount)?;
-//     let net_input_amount = exact_input_amount - input_transfer_fee;
+    let x = ctx.accounts.input_token_vault.amount;
+    let y = ctx.accounts.output_token_vault.amount;
+    let k = x.checked_mul(y).unwrap();
+    let curve_output_amount = (y.checked_mul(x.checked_add(curve_input_amount).unwrap()).unwrap().checked_sub(k)).unwrap().checked_div(x.checked_add(curve_input_amount).unwrap()).unwrap();
 
-//     // Calculate the curve amount, Net input amount - swap fees of the net input amount.
-//     let pool_state = &ctx.accounts.pool_state;
-//     let curve_input_amount = net_input_amount - pool_state.swap_fees(net_input_amount);
-//     require_gt!(curve_input_amount,0,ErrorCode::InvalidInputAmount);
+    let net_output_amount = if !amm_config.fee_side_input {
+        amm_config.calculate_post_fee_amount(curve_output_amount)
+    }else {
+        curve_output_amount
+    };
 
-//     // Apply curve math, x*y = new_x * new_y where new_x = x + curve_input_amount, new_y = y - curve_output_amount, Find curve_output_amount;
-//     let x = ctx.accounts.input_token_vault.amount;
-//     let y = ctx.accounts.output_token_vault.amount;
-//     let k_before = u128::from(x).checked_mul(y.into()).unwrap();
+    let output_mint = &ctx.accounts.output_mint;
+    let exact_output_amount = if ctx.accounts.output_token_program.key() == Token::id() {
+        net_output_amount
+    }else {
+        let output_mint_info = output_mint.to_account_info();
+        let output_mint_data = output_mint_info.try_borrow_data()?;
+        let output_mint_state = StateWithExtensions::<spl_token_2022::state::Mint>::unpack(&output_mint_data)?;
+        if let Ok(transfer_fee_config) = output_mint_state.get_extension::<TransferFeeConfig>() {
+            let clock = Clock::get()?;
+            let transfer_fee = transfer_fee_config.get_epoch_fee(clock.epoch);
+            transfer_fee.calculate_post_fee_amount(net_output_amount).unwrap()
+        }else {
+            net_output_amount
+        }
+    };
 
-//     let new_x = u128::from(x).checked_add(curve_input_amount.into()).ok_or(ErrorCode::MathOverflow)?;
-//     let new_y = {
+    require!(exact_output_amount >= minimum_output_amount,ErrorCode::NotMinimumOutputAmount);
 
-//         // Custom ceiling in smart contracts.
-//         let dividend = u128::from(x).checked_mul(y.into()).ok_or(ErrorCode::MathOverflow)?.checked_div(new_x).ok_or(ErrorCode::MathOverflow)?;
-//         let remainder = u128::from(x).checked_mul(y.into()).ok_or(ErrorCode::MathOverflow)?.checked_rem(new_x).ok_or(ErrorCode::MathOverflow)?;
+    let transfer_input_ctx = CpiContext::new(ctx.accounts.input_token_program.key(),TransferChecked {
+        mint:input_mint.to_account_info(),
+        from:ctx.accounts.trader.to_account_info(),
+        to:ctx.accounts.input_token_vault.to_account_info(),
+        authority:ctx.accounts.trader.to_account_info(),
+    });
 
-//         let mut new_y = dividend;
-//         if remainder > 0 {
-//             new_y += 1;
-//         }
-//         new_y
-//     };
+    transfer_checked(transfer_input_ctx,exact_input_amount, ctx.accounts.input_mint.decimals)?;
 
-//     // Amount transferred to the user.
-//     let curve_output_amount = y.checked_sub(u64::try_from(new_y)?).ok_or(ErrorCode::MathOverflow)?;
+    let amm_config_key = ctx.accounts.amm_config.key();
 
-//     let output_transfer_fee = get_transfer_fees(&ctx.accounts.output_mint, curve_output_amount)?;
-//     let net_output_amount = curve_output_amount - output_transfer_fee;
+    let pool = &ctx.accounts.pool;
 
-//     // Amount received post tax charged by the mint if owned by token2022 program and has TransferFeeConfig extension enabled.
-//     require_gte!(net_output_amount,min_output_amount,ErrorCode::FailedToExceedMinimum);
+    let pool_seeds:&[&[u8]] = &[Pool::STATIC_SEED,amm_config_key.as_ref(),pool.mint_0.as_ref(),pool.mint_1.as_ref(),&[pool.bump]];
+    let signer_seeds = [&pool_seeds[..]];
 
-//     let transfer_from_user_to_vault_ctx = CpiContext::new(ctx.accounts.input_token_program.key(),TransferCheckedWithFee{
-//         token_program_id:ctx.accounts.input_token_program.to_account_info(),
-//         source:ctx.accounts.owner_input_token.to_account_info(),
-//         destination:ctx.accounts.input_token_vault.to_account_info(),
-//         mint:ctx.accounts.input_mint.to_account_info(),
-//         authority:ctx.accounts.owner.to_account_info()
-//     });
+    let transfer_output_ctx = CpiContext::new(ctx.accounts.output_token_program.key(),TransferChecked {
+        mint:output_mint.to_account_info(),
+        from:ctx.accounts.output_token_vault.to_account_info(),
+        to:ctx.accounts.trader_output_token.to_account_info(),
+        authority:ctx.accounts.pool.to_account_info(),
+    }).with_signer(&signer_seeds);
 
-//     transfer_checked_with_fee(transfer_from_user_to_vault_ctx, exact_input_amount, ctx.accounts.input_mint.decimals, input_transfer_fee)?;
+    transfer_checked(transfer_output_ctx,net_output_amount, ctx.accounts.output_mint.decimals)?;
 
-//     let pool_id = ctx.accounts.pool_state.key();
-//     let pool_authority_seeds: &[&[u8]] = &[POOL_AUTHORITY.as_bytes(),pool_id.as_ref(),&[ctx.bumps.authority]];
-//     let signer_seeds = &[&pool_authority_seeds[..]];
+    ctx.accounts.input_token_vault.reload();
+    ctx.accounts.output_token_vault.reload();
 
-//     let transfer_from_vault_to_user_ctx = CpiContext::new(ctx.accounts.output_token_program.key(),TransferCheckedWithFee{
-//         token_program_id:ctx.accounts.output_token_program.to_account_info(),
-//         source:ctx.accounts.output_token_vault.to_account_info(),
-//         destination:ctx.accounts.owner_input_token.to_account_info(),
-//         mint:ctx.accounts.output_mint.to_account_info(),
-//         authority:ctx.accounts.owner.to_account_info()
-//     }).with_signer(signer_seeds);
+    let new_x = ctx.accounts.input_token_vault.amount;
+    let new_y = ctx.accounts.output_token_vault.amount;
+    let new_k = new_x.checked_mul(new_y).unwrap();
 
-//     transfer_checked_with_fee(transfer_from_vault_to_user_ctx, curve_output_amount, ctx.accounts.output_mint.decimals, output_transfer_fee)?;
-
-//     ctx.accounts.input_token_vault.reload()?;
-//     ctx.accounts.output_token_vault.reload()?;
-
-//     let k_after  = u128::from(ctx.accounts.input_token_vault.amount).checked_mul(ctx.accounts.output_token_vault.amount.into()).ok_or(ErrorCode::MathOverflow)?;
-
-//     // new invariant is greater than or equal to the old. This ensures that the pool is never in deficit after a swap.
-//     require_gte!(k_after,k_before);
-
-//     Ok(())
-// }
-
-// pub fn get_transfer_fees(mint:&InterfaceAccount<Mint>,pre_fee_amount:u64)->Result<u64>{
-//     let mint_info = mint.to_account_info();
-
-//     // If owned by token program.
-//     if *mint_info.owner == Token::id() {
-//         return Ok(0)
-//     }
-//     let mint_data = mint_info.try_borrow_data()?;
-//     let mint_state = StateWithExtensions::<spl_token_2022::state::Mint>::unpack(&mint_data)?;
-//     if let Ok(transfer_fee_config) = mint_state.get_extension::<TransferFeeConfig>(){
-//         let current_epoch = Clock::get()?.epoch;
-//         let transfer_fee = transfer_fee_config.get_epoch_fee(current_epoch);
-//         // Crucial check....has to do with the underlying formula used to calculate the inverse fee.
-//         if u16::from(transfer_fee.transfer_fee_basis_points) == MAX_FEE_BASIS_POINTS {
-//             return Ok(u64::from(transfer_fee.maximum_fee));
-//         }
-//         let fee = transfer_fee.calculate_fee(pre_fee_amount).unwrap();
-//         let fee_check = transfer_fee.calculate_inverse_fee(pre_fee_amount.checked_sub(fee).unwrap()).unwrap();
-
-//         // Cross check the fee. There exists two way for us to calculate the transfer fee, one is to calculate the fee directly and the other is to calculate the inverse fee on the post fee amount. Both should yield the same result. If not, we have to error out as something is wrong with the mint's transfer fee configuration.
-//         if fee != fee_check {
-//             return err!(ErrorCode::MismatchInTransferFeeCalculation);
-//         }
-//         return Ok(fee);
-//     }
-
-//     // token 2022 but no TransferFeeConfig extension enabled.
-//     return Ok(0)
-// }
+    require!(new_k >= k,ErrorCode::ConstantProductInvariantFailed);
+    Ok(())
+}

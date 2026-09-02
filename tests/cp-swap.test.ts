@@ -98,7 +98,7 @@ describe("cpmm", () => {
     mint1 = temp;
   }
 
-  const [pool_pda, pool_bump] = PublicKey.findProgramAddressSync(
+  const [poolPda, poolBump] = PublicKey.findProgramAddressSync(
     [
       new TextEncoder().encode("pool"),
       ammConfig.publicKey.toBuffer(),
@@ -123,20 +123,20 @@ describe("cpmm", () => {
 
   let token0Vault = getAssociatedTokenAddressSync(
     mint0.publicKey,
-    pool_pda,
+    poolPda,
     true,
     TOKEN_PROGRAM_ID,
   );
 
   let token1Vault = getAssociatedTokenAddressSync(
     mint1.publicKey,
-    pool_pda,
+    poolPda,
     true,
     TOKEN_2022_PROGRAM_ID,
   );
 
   let [lpMintPda, lpMintBump] = PublicKey.findProgramAddressSync(
-    [Buffer.from("lp_mint"), pool_pda.toBuffer()],
+    [Buffer.from("lp_mint"), poolPda.toBuffer()],
     program.programId,
   );
   let yashLpTokenAta = getAssociatedTokenAddressSync(
@@ -264,7 +264,9 @@ describe("cpmm", () => {
     } = await connection.getTokenAccountBalance(token1Vault);
     assert(new anchor.BN(token1VaultBalance).eq(new anchor.BN(initAmount1)));
 
-    let poolData = await program.account.pool.fetch(pool_pda);
+    let poolData = await program.account.pool.fetch(poolPda);
+    assert.equal(poolData.bump, poolBump);
+    assert.equal(poolData.lpMintBump, lpMintBump);
 
     console.log(poolData);
     let liquidity = Math.sqrt(initAmount0 * initAmount1);

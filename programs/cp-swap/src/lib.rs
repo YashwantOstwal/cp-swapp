@@ -29,10 +29,10 @@ pub mod cp_swap {
     pub fn initialize(ctx: Context<Initialize>,init_amount_0:u64,init_amount_1:u64,transfer_checked_fee_0:u64,transfer_checked_fee_1:u64) -> Result<()> {
         instructions::handle_initialize(ctx, init_amount_0, init_amount_1,transfer_checked_fee_0,transfer_checked_fee_1)
     }
-    pub fn deposit(ctx: Context<Deposit>,fees_in_ppm:u32,lp_tokens_required:u64,max_deposit_a:u64,max_deposit_b:u64) -> Result<()> {
-        instructions::deposit_handler(ctx, fees_in_ppm,lp_tokens_required,max_deposit_a,max_deposit_b)
-    }
-    // pub fn swap_base_input(ctx: Context<SwapBaseInput>,fees_in_ppm:u32,exact_input_amount:u64,min_output_amount:u64) -> Result<()> {
-    //     instructions::swap_base_input_handler(ctx, fees_in_ppm,exact_input_amount,min_output_amount)
+    // pub fn deposit(ctx: Context<Deposit>,fees_in_ppm:u32,lp_tokens_required:u64,max_deposit_a:u64,max_deposit_b:u64) -> Result<()> {
+    //     instructions::deposit_handler(ctx, fees_in_ppm,lp_tokens_required,max_deposit_a,max_deposit_b)
     // }
+    pub fn swap_base_input(ctx: Context<SwapBaseInput>,exact_input_amount:u64,min_output_amount:u64) -> Result<()> {
+        instructions::handle_swap_base_input(ctx,exact_input_amount,min_output_amount)
+    }
 }

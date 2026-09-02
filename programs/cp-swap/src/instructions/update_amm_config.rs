@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-
+use anchor_spl::token_2022::spl_token_2022::extension::transfer_fee::MAX_FEE_BASIS_POINTS;
 use crate::{states::*,error::ErrorCode,constants::*};
 
 #[derive(Accounts)]
@@ -15,7 +15,7 @@ pub struct UpdateAmmConfig<'info> {
 }
 
 pub fn handle_update_amm_config(ctx:Context<UpdateAmmConfig>,config:AmmConfig) -> Result<()> {
-    require!(config.swap_fee_rate_in_bps <= MAX_SWAP_FEES_BASIS_POINTS,ErrorCode::InvalidFees);
+    require!(config.swap_fee_rate_in_bps < MAX_FEE_BASIS_POINTS,ErrorCode::InvalidFees);
 
     let amm_config_acc = &mut ctx.accounts.amm_config;
     amm_config_acc.set_inner(config);
