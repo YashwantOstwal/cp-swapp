@@ -54,6 +54,7 @@ describe("cpmm", () => {
         disableCreatePool: false,
         swapFeeRateInBps: 3, // 0.03%
         updateAuthority: yash.publicKey,
+        feeSideInput: true,
       })
       .accounts({
         ammConfig: ammConfig.publicKey,
