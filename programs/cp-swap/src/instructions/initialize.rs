@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_spl::{associated_token::AssociatedToken,token::{Token},token_2022::{MintToChecked,mint_to_checked,Token2022}, token_interface::{transfer_checked_with_fee, TransferChecked,transfer_checked,Mint, TokenAccount, TokenInterface, TransferCheckedWithFee}};
-use crate::{error::ErrorCode, states::*, constants::*};
+use crate::{constants::*, error::ErrorCode, is_mint_supported, states::*};
 
 #[derive(Accounts)]
 pub struct Initialize<'info>{
@@ -15,14 +15,13 @@ pub struct Initialize<'info>{
 
     #[account(
         mint::token_program = token_program_0,
-        constraint = mint_0.key() < mint_1.key() @ ErrorCode::Mint1LexicographicallyGreaterThanOrEqualToMint0
     )]
     pub mint_0: Box<InterfaceAccount<'info,Mint>>,
     pub token_program_0: Interface<'info,TokenInterface>,
 
     #[account(
         mint::token_program = token_program_1,
-        constraint = mint_1.key() > mint_0.key() @ ErrorCode::Mint1LexicographicallyGreaterThanOrEqualToMint0
+        constraint = mint_0.key() < mint_1.key() @ ErrorCode::Mint1LexicographicallyGreaterThanOrEqualToMint0
     )]
     pub mint_1: Box<InterfaceAccount<'info,Mint>>,
     pub token_program_1: Interface<'info,TokenInterface>,
@@ -97,6 +96,9 @@ pub struct Initialize<'info>{
 }
 pub fn handle_initialize(ctx:Context<Initialize>,init_amount_0:u64,init_amount_1:u64,transfer_checked_fee_0:u64,transfer_checked_fee_1:u64) -> Result<()> {
     
+    is_mint_supported(&ctx.accounts.mint_0)?;
+    is_mint_supported(&ctx.accounts.mint_1)?; 
+
     let gross_amount_0 = init_amount_0.checked_add(transfer_checked_fee_0).unwrap();
     let gross_amount_1 = init_amount_1.checked_add(transfer_checked_fee_1).unwrap();
 

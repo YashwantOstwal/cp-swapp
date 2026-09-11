@@ -54,8 +54,17 @@ pub enum ErrorCode {
     MismatchAccounts,
 
     #[msg("")]
-    NotMinimumOutputAmount,
+    NotMinimumReceiveAmount,
 
     #[msg("")]
     ConstantProductInvariantFailed,
+
+    #[msg("")]
+    MintNotSupported,
+
+    #[msg("")]
+    ExceedsMaximumLimit,   
+
+    #[msg("")]
+    InvalidAmount
 }

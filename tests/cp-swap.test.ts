@@ -54,7 +54,7 @@ describe("cpmm", () => {
         disableCreatePool: false,
         swapFeeRateInBps: 3, // 0.03%
         updateAuthority: yash.publicKey,
-        feeSideInput: true,
+        isFeeSideReceive: false,
       })
       .accounts({
         ammConfig: ammConfig.publicKey,
@@ -98,6 +98,7 @@ describe("cpmm", () => {
     mint0 = mint1;
     mint1 = temp;
   }
+  assert(mint0.publicKey.toBuffer().compare(mint1.publicKey.toBuffer()) == -1);
 
   const [poolPda, poolBump] = PublicKey.findProgramAddressSync(
     [
@@ -172,7 +173,7 @@ describe("cpmm", () => {
         mint1.publicKey,
         mint1.publicKey,
         mint1.publicKey,
-        5,
+        5, // Transfer fees of 0.05% upto 1 token.
         BigInt(1000000),
       ),
       createInitializeMint2Instruction(
@@ -218,7 +219,7 @@ describe("cpmm", () => {
       mint0.publicKey,
       yashMint0Ata,
       mint0,
-      grossAmount0,
+      grossAmount0 * 5,
     ); // 1.000 tokens
 
     await mintTo(
@@ -227,7 +228,7 @@ describe("cpmm", () => {
       mint1.publicKey,
       yashMint1Ata,
       mint1,
-      grossAmount1,
+      grossAmount1 * 5,
       undefined,
       undefined,
       TOKEN_2022_PROGRAM_ID,
@@ -235,6 +236,14 @@ describe("cpmm", () => {
 
     let transferFees1 = Math.ceil((grossAmount1 * 5) / 10000);
     assert.equal(grossAmount1 - initAmount1, transferFees1);
+
+    let {
+      value: { amount: yashMint0AtaBalanceBefore },
+    } = await connection.getTokenAccountBalance(yashMint0Ata);
+
+    let {
+      value: { amount: yashMint1AtaBalanceBefore },
+    } = await connection.getTokenAccountBalance(yashMint1Ata);
     await program.methods
       .initialize(
         new anchor.BN(initAmount0),
@@ -279,5 +288,135 @@ describe("cpmm", () => {
     } = await connection.getTokenAccountBalance(yashLpTokenAta);
 
     assert(new anchor.BN(yashLpTokenBalance).eqn(liquidity - 100));
+
+    let {
+      value: { amount: yashMint0AtaBalanceAfter },
+    } = await connection.getTokenAccountBalance(yashMint0Ata);
+
+    let {
+      value: { amount: yashMint1AtaBalanceAfter },
+    } = await connection.getTokenAccountBalance(yashMint1Ata);
+
+    assert(
+      new anchor.BN(yashMint0AtaBalanceBefore)
+        .sub(new anchor.BN(yashMint0AtaBalanceAfter))
+        .eq(new anchor.BN(grossAmount0)),
+    );
+
+    assert(
+      new anchor.BN(yashMint1AtaBalanceBefore)
+        .sub(new anchor.BN(yashMint1AtaBalanceAfter))
+        .eq(new anchor.BN(grossAmount1)),
+    );
+  });
+
+  // Current state: Initialized a cp swap pool for mint0 (owned by Tokenkeg...) and mint1 (owned by Tokenz... with transfer fees extension enabled with transfer fees configured to 0.05% upto 1 full token) with transfer fees of 0.03%.
+
+  it("3) Swapping 100 mint0 for mint1 ", async () => {
+    await program.methods
+      .swapBaseSend(new anchor.BN(100), new anchor.BN(0))
+      .accountsPartial({
+        sendMint: mint0.publicKey,
+        sendTokenProgram: TOKEN_PROGRAM_ID,
+        traderSendToken: yashMint0Ata,
+        trader: yash.publicKey,
+        traderReceiveToken: yashMint1Ata,
+        receiveMint: mint1.publicKey,
+        receiveTokenProgram: TOKEN_2022_PROGRAM_ID,
+        ammConfig: ammConfig.publicKey,
+        pool: poolPda,
+        sendTokenVault: token0Vault,
+        receiveTokenVault: token1Vault,
+      })
+      .signers([yash])
+      .rpc();
+  });
+
+  it("Swap mint0 for 100 mint1", async () => {
+    let {
+      value: { amount: yashToken0BalanceBefore },
+    } = await connection.getTokenAccountBalance(yashMint0Ata);
+
+    await program.methods
+      .swapBaseReceive(
+        new anchor.BN(100),
+        new anchor.BN(yashToken0BalanceBefore),
+      )
+      .accountsPartial({
+        sendMint: mint0.publicKey,
+        sendTokenProgram: TOKEN_PROGRAM_ID,
+        traderSendToken: yashMint0Ata,
+        trader: yash.publicKey,
+        traderReceiveToken: yashMint1Ata,
+        receiveMint: mint1.publicKey,
+        receiveTokenProgram: TOKEN_2022_PROGRAM_ID,
+        ammConfig: ammConfig.publicKey,
+        pool: poolPda,
+        sendTokenVault: token0Vault,
+        receiveTokenVault: token1Vault,
+      })
+      .signers([yash])
+      .rpc();
+  });
+
+  it("Deposit liquidity", async () => {
+    let {
+      value: { amount: yashToken0BalanceBefore },
+    } = await connection.getTokenAccountBalance(yashMint0Ata);
+
+    let {
+      value: { amount: yashToken1BalanceBefore },
+    } = await connection.getTokenAccountBalance(yashMint1Ata);
+
+    let pool = await program.account.pool.fetch(poolPda);
+    console.log("yashToken0BalanceBefore", yashToken0BalanceBefore);
+    console.log("yashToken1BalanceBefore", yashToken1BalanceBefore);
+    await program.methods
+      .deposit(
+        new anchor.BN(yashToken0BalanceBefore),
+        new anchor.BN(yashToken1BalanceBefore),
+        new anchor.BN(1),
+      )
+      .accountsPartial({
+        lp: yash.publicKey,
+        lpToken0: yashMint0Ata,
+        lpToken1: yashMint1Ata,
+        pool: poolPda,
+        token0Vault: token0Vault,
+        token1Vault: token1Vault,
+        lpMint: lpMintPda,
+        ammConfig: ammConfig.publicKey,
+        mint0: mint0.publicKey,
+        token0Program: TOKEN_PROGRAM_ID,
+        mint1: mint1.publicKey,
+        token1Program: TOKEN_2022_PROGRAM_ID,
+      })
+      .signers([yash])
+      .rpc();
+  });
+
+  it("Withdraw liquidity", async () => {
+    let {
+      value: { amount: lpTokenBalanceBefore },
+    } = await connection.getTokenAccountBalance(yashLpTokenAta);
+
+    await program.methods
+      .withdraw(new anchor.BN(0), new anchor.BN(0), new anchor.BN(1))
+      .accountsPartial({
+        lp: yash.publicKey,
+        lpToken0: yashMint0Ata,
+        lpToken1: yashMint1Ata,
+        pool: poolPda,
+        token0Vault: token0Vault,
+        token1Vault: token1Vault,
+        lpMint: lpMintPda,
+        ammConfig: ammConfig.publicKey,
+        mint0: mint0.publicKey,
+        token0Program: TOKEN_PROGRAM_ID,
+        mint1: mint1.publicKey,
+        token1Program: TOKEN_2022_PROGRAM_ID,
+      })
+      .signers([yash])
+      .rpc();
   });
 });

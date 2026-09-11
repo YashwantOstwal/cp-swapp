@@ -15,10 +15,10 @@ use anchor_spl::{
 };
 use crate::error::ErrorCode;
 
-pub fn is_mint_supported(mint:&InterfaceAccount<Mint>) -> Result<bool> {
+pub fn is_mint_supported(mint:&InterfaceAccount<Mint>) -> Result<()> {
     let mint_info = mint.to_account_info();
     if *mint_info.owner == Token::id() {
-       return Ok(true);
+       return Ok(());
     }
     let mint_data = mint_info.try_borrow_data()?;
     let mint_state = StateWithExtensions::<MintState>::unpack(&mint_data)?;
@@ -30,9 +30,9 @@ pub fn is_mint_supported(mint:&InterfaceAccount<Mint>) -> Result<bool> {
             mint_extension != &ExtensionType::TokenMetadata && 
             mint_extension != &ExtensionType::ScaledUiAmount && 
             mint_extension != &ExtensionType::InterestBearingConfig {
-            return Ok(false)
+            return Err(anchor_lang::error!(ErrorCode::MintNotSupported));
         }
     }
-    Ok(true)
+    Ok(())
 
 }

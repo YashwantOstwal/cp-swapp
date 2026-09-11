@@ -6,7 +6,7 @@ pub struct AmmConfig {
     pub disable_create_pool:bool,
     pub swap_fee_rate_in_bps:u16,
     pub update_authority:Option<Pubkey>,
-    pub fee_side_input:bool,
+    pub is_fee_side_receive:bool,
 }
 
 impl AmmConfig {
