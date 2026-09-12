@@ -16,14 +16,4 @@ impl Pool {
     pub const LEN:usize = 8 + Pool::INIT_SPACE;
     pub const STATIC_SEED:&[u8] = b"pool";
 
-//     pub fn swap_fees(&self,net_input_amount:u64)-> u64 {
-//         let dividend = u128::from(net_input_amount).checked_mul(self.fees_in_ppm.into()).unwrap().checked_div(SWAP_FEES_DENOMINATION.into()).unwrap();
-//         let remainder = u128::from(net_input_amount).checked_mul(self.fees_in_ppm.into()).unwrap().checked_rem(SWAP_FEES_DENOMINATION.into()).unwrap();
-
-//         let mut swap_fees = dividend;
-//         if remainder > 0 {
-//             swap_fees+=1;
-//         }
-//         u64::try_from(swap_fees).unwrap()
-//     }
 }

@@ -73,7 +73,7 @@ pub struct Initialize<'info>{
     #[account(
         init,
         payer = creator,
-        mint::decimals = 6,
+        mint::decimals = 0,
         mint::authority = pool,
         mint::token_program = token_2022_program,
         seeds = [LP_MINT_STATIC_SEED,pool.key().as_ref()],

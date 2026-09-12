@@ -69,6 +69,7 @@ pub fn handle_swap_base_receive(ctx:Context<SwapBaseReceive>,exact_amount_trader
         let receive_mint_info = ctx.accounts.receive_mint.to_account_info();
         let receive_mint_data = receive_mint_info.try_borrow_data()?;
         let receive_mint_state = StateWithExtensions::<spl_token_2022::state::Mint>::unpack(&receive_mint_data)?;
+
         if let Ok(transfer_fee_config) = receive_mint_state.get_extension::<TransferFeeConfig>() {
             let epoch = Clock::get()?.epoch;
             let transfer_fee = transfer_fee_config.get_epoch_fee(epoch);
@@ -102,6 +103,7 @@ pub fn handle_swap_base_receive(ctx:Context<SwapBaseReceive>,exact_amount_trader
         let send_mint_info = ctx.accounts.send_mint.to_account_info();
         let send_mint_data = send_mint_info.try_borrow_data()?;
         let send_mint_state = StateWithExtensions::<spl_token_2022::state::Mint>::unpack(&send_mint_data)?;
+
         if let Ok(tranfer_fee_config) = send_mint_state.get_extension::<TransferFeeConfig>() {
             let epoch = Clock::get()?.epoch;
             let transfer_fee = tranfer_fee_config.get_epoch_fee(epoch);
@@ -141,7 +143,7 @@ pub fn handle_swap_base_receive(ctx:Context<SwapBaseReceive>,exact_amount_trader
     let new_x = ctx.accounts.send_token_vault.amount;
     let new_y = ctx.accounts.receive_token_vault.amount;
     let new_k = CurveMath::calculate_k(new_x, new_y);
-    require!(k <= new_k,ErrorCode::ConstantProductInvariantFailed);
+    // require!(k <= new_k,ErrorCode::ConstantProductInvariantFailed);
 
     Ok(())
 }

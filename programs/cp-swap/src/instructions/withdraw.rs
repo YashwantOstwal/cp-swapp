@@ -50,9 +50,7 @@ pub struct Withdraw<'info> {
         associated_token::token_program = token_1_program
     )]
     pub token_1_vault: Box<InterfaceAccount<'info,TokenAccount>>,
-
-    pub amm_config : Box<Account<'info,AmmConfig>>,
-
+    
     #[account(
         mut, // pool.lp_supply is about to change.
         has_one = amm_config,
@@ -62,6 +60,8 @@ pub struct Withdraw<'info> {
         bump = pool.bump
     )]
     pub pool: Box<Account<'info,Pool>>,
+
+    pub amm_config : Box<Account<'info,AmmConfig>>,
 
     #[account(
         mut, // supply field of this mint is about to change.
@@ -88,17 +88,14 @@ pub fn handle_withdraw(ctx:Context<Withdraw>,min_amount_0_lp_receive:u64,min_amo
     let lp_token = &ctx.accounts.lp_token_ata;
     require!(dilute_lp_tokens > 0 && dilute_lp_tokens <= lp_token.amount,ErrorCode::InvalidAmount);
 
-    let mint_0 = &ctx.accounts.mint_0;
-    let mint_1 = &ctx.accounts.mint_1;
     let pool = &mut ctx.accounts.pool;
     
-    let exact_amount_0_pool_must_send = dilute_lp_tokens.checked_mul(mint_0.supply).unwrap().checked_div(pool.lp_supply).unwrap();
-    let exact_amount_1_pool_must_send = dilute_lp_tokens.checked_mul(mint_1.supply).unwrap().checked_div(pool.lp_supply).unwrap();
-    
-    
-
     let pool_seeds:&[&[u8]] = &[Pool::STATIC_SEED,pool.amm_config.as_ref(),pool.mint_0.as_ref(),pool.mint_1.as_ref(),&[pool.bump]];
     let signer_seeds  = [&pool_seeds[..]];
+    
+    let exact_amount_0_pool_must_send = dilute_lp_tokens.checked_mul(ctx.accounts.token_0_vault.amount).unwrap().checked_div(pool.lp_supply).unwrap();
+
+    let mint_0 = &ctx.accounts.mint_0;
     let mint_0_info = mint_0.to_account_info();
     let exact_amount_0_lp_receive = if *mint_0_info.owner == Token::id() {
         exact_amount_0_pool_must_send
@@ -113,8 +110,11 @@ pub fn handle_withdraw(ctx:Context<Withdraw>,min_amount_0_lp_receive:u64,min_amo
             exact_amount_0_pool_must_send
         }
     };
-    require!(min_amount_0_lp_receive <= exact_amount_0_lp_receive,ErrorCode::ExceedsMaximumLimit);
+    require!(min_amount_0_lp_receive <= exact_amount_0_lp_receive,ErrorCode::NotMinimumReceiveAmount);
 
+    let exact_amount_1_pool_must_send = dilute_lp_tokens.checked_mul(ctx.accounts.token_1_vault.amount).unwrap().checked_div(pool.lp_supply).unwrap();
+
+    let mint_1 = &ctx.accounts.mint_1;
     let mint_1_info = mint_1.to_account_info();
     let exact_amount_1_lp_receive = if *mint_1_info.owner == Token::id() {
         exact_amount_1_pool_must_send
@@ -124,12 +124,12 @@ pub fn handle_withdraw(ctx:Context<Withdraw>,min_amount_0_lp_receive:u64,min_amo
         if let Ok(transfer_fee_config) = mint_1_state.get_extension::<TransferFeeConfig>() {
             let clock = Clock::get()?;
             let transfer_fee = transfer_fee_config.get_epoch_fee(clock.epoch);
-            transfer_fee.calculate_pre_fee_amount(exact_amount_1_pool_must_send).unwrap()
+            transfer_fee.calculate_post_fee_amount(exact_amount_1_pool_must_send).unwrap()
         }else {
             exact_amount_1_pool_must_send
         }
     };
-    require!(min_amount_1_lp_receive <= exact_amount_1_lp_receive ,ErrorCode::ExceedsMaximumLimit);
+    require!(min_amount_1_lp_receive <= exact_amount_1_lp_receive ,ErrorCode::NotMinimumReceiveAmount);
 
     let transfer_0_ctx = CpiContext::new(ctx.accounts.token_0_program.key(),TransferChecked {
         mint:mint_0_info,
@@ -138,7 +138,7 @@ pub fn handle_withdraw(ctx:Context<Withdraw>,min_amount_0_lp_receive:u64,min_amo
         authority:pool.to_account_info(),
     }).with_signer(&signer_seeds);
 
-    transfer_checked(transfer_0_ctx, exact_amount_0_lp_receive, mint_0.decimals)?;
+    transfer_checked(transfer_0_ctx, exact_amount_0_pool_must_send, mint_0.decimals)?;
 
     let transfer_1_ctx = CpiContext::new(ctx.accounts.token_1_program.key(),TransferChecked {
         mint:mint_1_info,
@@ -147,15 +147,15 @@ pub fn handle_withdraw(ctx:Context<Withdraw>,min_amount_0_lp_receive:u64,min_amo
         authority:pool.to_account_info(),
     }).with_signer(&signer_seeds);
 
-    transfer_checked(transfer_1_ctx, exact_amount_1_lp_receive, mint_1.decimals)?;
+    transfer_checked(transfer_1_ctx, exact_amount_1_pool_must_send, mint_1.decimals)?;
 
-    let burn_lp_tokens = CpiContext::new(ctx.accounts.token_2022_program.key(),BurnChecked {
+    let burn_lp_tokens_ctx = CpiContext::new(ctx.accounts.token_2022_program.key(),BurnChecked {
         mint:ctx.accounts.lp_mint.to_account_info(),
         from:ctx.accounts.lp_token_ata.to_account_info(),
         authority:ctx.accounts.lp.to_account_info(),
     });
 
-    burn_checked(burn_lp_tokens, dilute_lp_tokens, ctx.accounts.lp_mint.decimals)?;
+    burn_checked(burn_lp_tokens_ctx, dilute_lp_tokens, ctx.accounts.lp_mint.decimals)?;
 
     pool.lp_supply = pool.lp_supply.checked_sub(dilute_lp_tokens).unwrap();
     Ok(())

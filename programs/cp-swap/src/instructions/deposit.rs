@@ -93,15 +93,14 @@ pub struct Deposit<'info> {
 pub fn handle_deposit(ctx:Context<Deposit>,max_amount_0_lp_send:u64,max_amount_1_lp_send:u64,req_lp_tokens:u64) -> Result<()> {
 
     require!(req_lp_tokens > 0,ErrorCode::InvalidAmount);
-    let mint_0 = &ctx.accounts.mint_0;
-    let mint_1 = &ctx.accounts.mint_1;
+    let token_0_vault = &ctx.accounts.token_0_vault;
+    let token_1_vault = &ctx.accounts.token_1_vault;
     let pool = &ctx.accounts.pool;
 
-    // lp_tokens_minted = (deposit_amount_0 * lp_supply) / reserve_0 
-    let exact_amount_0_pool_must_receive = req_lp_tokens.checked_mul(mint_0.supply).unwrap().div_ceil(pool.lp_supply);
-    let exact_amount_1_pool_must_receive = req_lp_tokens.checked_mul(mint_1.supply).unwrap().div_ceil(pool.lp_supply);
+    let exact_amount_0_pool_must_receive = req_lp_tokens.checked_mul(token_0_vault.amount).unwrap().div_ceil(pool.lp_supply);
+    let exact_amount_1_pool_must_receive = req_lp_tokens.checked_mul(token_1_vault.amount).unwrap().div_ceil(pool.lp_supply);
 
-
+    let mint_0 = &ctx.accounts.mint_0;
     let mint_0_info = mint_0.to_account_info();
     let exact_amount_0_lp_must_send = if *mint_0_info.owner == Token::id() {
         exact_amount_0_pool_must_receive
@@ -118,6 +117,7 @@ pub fn handle_deposit(ctx:Context<Deposit>,max_amount_0_lp_send:u64,max_amount_1
     };
     require!(exact_amount_0_lp_must_send <= max_amount_0_lp_send,ErrorCode::ExceedsMaximumLimit);
 
+    let mint_1 = &ctx.accounts.mint_1;
     let mint_1_info = mint_1.to_account_info();
     let exact_amount_1_lp_must_send = if *mint_1_info.owner == Token::id() {
         exact_amount_1_pool_must_receive

@@ -15,7 +15,6 @@ import {
   ExtensionType,
   getMint,
   getMintLen,
-  getTransferFeeConfig,
   getExtensionData,
   initializeMint2InstructionData,
   TOKEN_2022_PROGRAM_ID,
@@ -24,8 +23,14 @@ import {
   mintTo,
   TOKEN_PROGRAM_ID,
   getAssociatedTokenAddressSync,
+  getTransferFeeConfig,
+  calculateEpochFee,
+  getEpochFee,
+  MAX_FEE_BASIS_POINTS,
 } from "@solana/spl-token";
 import { assert } from "chai";
+
+const { BN } = anchor;
 describe("cpmm", () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
@@ -36,15 +41,35 @@ describe("cpmm", () => {
   } = provider;
 
   const program = anchor.workspace.cp_swap as Program<CpSwap>;
-  let yash = new Keypair();
+  let yash = new Keypair(); // it's me
+  let harsh = new Keypair();
+
+  let alice = new Keypair();
+  let bob = new Keypair();
   before(async () => {
-    const sign = await connection.requestAirdrop(
-      yash.publicKey,
-      LAMPORTS_PER_SOL * 10,
+    await connection.confirmTransaction(
+      await connection.requestAirdrop(yash.publicKey, LAMPORTS_PER_SOL),
     );
-    await connection.confirmTransaction(sign);
     let yashBalance = await connection.getBalance(yash.publicKey);
-    assert.equal(yashBalance, LAMPORTS_PER_SOL * 10);
+    assert.equal(yashBalance, LAMPORTS_PER_SOL);
+
+    await connection.confirmTransaction(
+      await connection.requestAirdrop(harsh.publicKey, LAMPORTS_PER_SOL),
+    );
+    let harshBalance = await connection.getBalance(harsh.publicKey);
+    assert.equal(harshBalance, LAMPORTS_PER_SOL);
+
+    await connection.confirmTransaction(
+      await connection.requestAirdrop(alice.publicKey, LAMPORTS_PER_SOL),
+    );
+    let aliceBalance = await connection.getBalance(alice.publicKey);
+    assert.equal(aliceBalance, LAMPORTS_PER_SOL);
+
+    await connection.confirmTransaction(
+      await connection.requestAirdrop(bob.publicKey, LAMPORTS_PER_SOL),
+    );
+    let bobBalance = await connection.getBalance(yash.publicKey);
+    assert.equal(bobBalance, LAMPORTS_PER_SOL);
   });
 
   let ammConfig = new Keypair();
@@ -141,22 +166,64 @@ describe("cpmm", () => {
     [Buffer.from("lp_mint"), poolPda.toBuffer()],
     program.programId,
   );
-  let yashLpTokenAta = getAssociatedTokenAddressSync(
+  let yashLpMintAta = getAssociatedTokenAddressSync(
     lpMintPda,
     yash.publicKey,
     false,
     TOKEN_2022_PROGRAM_ID,
   );
+  function divCeil(numerator: anchor.BN, denominator: anchor.BN) {
+    return numerator
+      .div(denominator)
+      .add(new BN(numerator.mod(denominator).cmp(new BN(0))));
+  }
+  async function calculatePreTransferAmount(
+    transferFeeConfig: TransferFeeConfig,
+    postFeeAmount: anchor.BN,
+  ) {
+    const { epoch } = await connection.getEpochInfo();
+    const transferFee = getEpochFee(transferFeeConfig, BigInt(epoch));
+    if (transferFee.transferFeeBasisPoints == 0) {
+      return postFeeAmount;
+    }
+    if (transferFee.transferFeeBasisPoints == MAX_FEE_BASIS_POINTS) {
+      return postFeeAmount.add(new BN(transferFee.maximumFee));
+    } else {
+      const num = postFeeAmount.mul(new BN(MAX_FEE_BASIS_POINTS));
+      const den = new BN(
+        MAX_FEE_BASIS_POINTS - transferFee.transferFeeBasisPoints,
+      );
 
+      let preFeeAmount = divCeil(num, den);
+      const maxFees = postFeeAmount.add(new BN(transferFee.maximumFee));
+      if (preFeeAmount.cmp(maxFees) == 1) {
+        preFeeAmount = maxFees;
+      }
+      return preFeeAmount;
+    }
+  }
+  const mint0Decimals = 3;
+  const mint1Decimals = 6;
   const initAmount0 = 1_000;
   const grossAmount0 = initAmount0; // 10000/10.000 tokens
   const initAmount1 = 1000_000000;
-  let grossAmount1 = Math.min(
-    Math.ceil((1000_000000 * 10000) / (10000 - 5)),
+  const transferFeeBasisPoints1 = 5; // 0.05%
+  const maxFees1 = 1_000000; // 1 token
+  const grossAmount1 = Math.min(
+    Math.ceil((initAmount1 * 10000) / (10000 - 5)),
     initAmount1 + 1000000,
   ); // max(1000500251,1001000000)  = 1000500251/1000.500251 tokens
+
+  const expectedLiquidity = 1000000; // sqrt(1_000 * 1000_000000)
   it("2) Creating a CPMM pool for a token and token-2022 mints referencing the previously created AMM config.", async () => {
-    await createMint(connection, payer, mint0.publicKey, null, 3, mint0);
+    await createMint(
+      connection,
+      payer,
+      mint0.publicKey,
+      null,
+      mint0Decimals,
+      mint0,
+    );
     let mint0Data = await getMint(connection, mint0.publicKey);
 
     let mintSize = getMintLen([ExtensionType.TransferFeeConfig]);
@@ -173,12 +240,12 @@ describe("cpmm", () => {
         mint1.publicKey,
         mint1.publicKey,
         mint1.publicKey,
-        5, // Transfer fees of 0.05% upto 1 token.
-        BigInt(1000000),
+        transferFeeBasisPoints1, // Transfer fees of 0.05% upto 1 token.
+        BigInt(maxFees1),
       ),
       createInitializeMint2Instruction(
         mint1.publicKey,
-        6,
+        mint1Decimals,
         mint1.publicKey,
         null,
         TOKEN_2022_PROGRAM_ID,
@@ -195,6 +262,14 @@ describe("cpmm", () => {
     );
 
     let mint1TransferFeeConfig = getTransferFeeConfig(mint1Data);
+    assert(
+      (
+        await calculatePreTransferAmount(
+          mint1TransferFeeConfig,
+          new BN(initAmount1),
+        )
+      ).eq(new BN(grossAmount1)),
+    );
 
     await createAssociatedTokenAccount(
       connection,
@@ -213,14 +288,15 @@ describe("cpmm", () => {
       TOKEN_2022_PROGRAM_ID,
     );
 
+    // Airdropping alott of tokens.
     await mintTo(
       connection,
       payer,
       mint0.publicKey,
       yashMint0Ata,
       mint0,
-      grossAmount0 * 5,
-    ); // 1.000 tokens
+      1000000 * Math.pow(10, mint1Decimals),
+    );
 
     await mintTo(
       connection,
@@ -228,14 +304,11 @@ describe("cpmm", () => {
       mint1.publicKey,
       yashMint1Ata,
       mint1,
-      grossAmount1 * 5,
+      1000000 * Math.pow(10, mint1Decimals),
       undefined,
       undefined,
       TOKEN_2022_PROGRAM_ID,
-    ); // 1000.500251 tokens
-
-    let transferFees1 = Math.ceil((grossAmount1 * 5) / 10000);
-    assert.equal(grossAmount1 - initAmount1, transferFees1);
+    );
 
     let {
       value: { amount: yashMint0AtaBalanceBefore },
@@ -278,14 +351,15 @@ describe("cpmm", () => {
     assert.equal(poolData.bump, poolBump);
     assert.equal(poolData.lpMintBump, lpMintBump);
 
-    console.log(poolData);
-    let liquidity = Math.sqrt(initAmount0 * initAmount1);
-
-    assert.equal(poolData.lpSupply.toNumber(), liquidity);
-
+    const liquidity = Math.sqrt(initAmount0 * initAmount1);
+    assert.equal(expectedLiquidity, liquidity);
+    assert.equal(
+      poolData.lpSupply.toNumber(),
+      Math.sqrt(initAmount0 * initAmount1),
+    );
     let {
       value: { amount: yashLpTokenBalance },
-    } = await connection.getTokenAccountBalance(yashLpTokenAta);
+    } = await connection.getTokenAccountBalance(yashLpMintAta);
 
     assert(new anchor.BN(yashLpTokenBalance).eqn(liquidity - 100));
 
@@ -310,7 +384,269 @@ describe("cpmm", () => {
     );
   });
 
-  // Current state: Initialized a cp swap pool for mint0 (owned by Tokenkeg...) and mint1 (owned by Tokenz... with transfer fees extension enabled with transfer fees configured to 0.05% upto 1 full token) with transfer fees of 0.03%.
+  // Current state:
+  // Initialised a pool with mint0 (3 decimals) and mint1 (6 decimals) with the pool state to be:
+
+  // token0Vault & token1Vault balances = 1_000 & 1000_000000, pool.lpSupply = 1000000, YashLpAta balance = 999900
+
+  // Note: The actual LP mint supply is 999900 ( 100% of the it is owned by Yash).
+  // Yash has lost 100 LP tokens worth of assets to the newly created pool to provide minimum liquidity (100 tokens are locked by the pool).
+  // (100 * 1_000) / 1000000 of mint0 + (100 * 1000_000000) / 1000000 of mint1 is lost by Yash.
+
+  it("Yash withdraws half of his liquidity", async () => {
+    const {
+      value: { amount: yashLpAtaBalanceBefore },
+    } = await connection.getTokenAccountBalance(yashLpMintAta);
+
+    const withdrawLiquidity = new anchor.BN(yashLpAtaBalanceBefore).divRound(
+      new anchor.BN(2),
+    );
+
+    const {
+      value: { amount: yashToken0BalanceBefore },
+    } = await connection.getTokenAccountBalance(yashMint0Ata);
+    const {
+      value: { amount: yashToken1BalanceBefore },
+    } = await connection.getTokenAccountBalance(yashMint1Ata);
+
+    const {
+      value: { amount: token0VaultBalanceBefore },
+    } = await connection.getTokenAccountBalance(token0Vault);
+
+    const {
+      value: { amount: token1VaultBalanceBefore },
+    } = await connection.getTokenAccountBalance(token1Vault);
+
+    const poolBefore = await program.account.pool.fetch(poolPda);
+
+    const expectedToken0PoolSend = new BN(withdrawLiquidity)
+      .mul(new BN(token0VaultBalanceBefore))
+      .div(new BN(poolBefore.lpSupply));
+
+    const expectedToken0Receive = expectedToken0PoolSend;
+
+    const expectedToken1PoolSend = new BN(withdrawLiquidity)
+      .mul(new BN(token1VaultBalanceBefore))
+      .div(new BN(poolBefore.lpSupply));
+
+    let mint1Account = await getMint(
+      connection,
+      mint1.publicKey,
+      undefined,
+      TOKEN_2022_PROGRAM_ID,
+    );
+
+    const mint1TransferFeeConfig = getTransferFeeConfig(mint1Account);
+
+    const { epoch } = await connection.getEpochInfo();
+    let transferFeeForPoolSend = calculateEpochFee(
+      mint1TransferFeeConfig,
+      BigInt(epoch),
+      BigInt(expectedToken1PoolSend.toNumber()),
+    );
+
+    const expectedToken1Receive = new BN(expectedToken1PoolSend).sub(
+      new BN(transferFeeForPoolSend),
+    );
+
+    await program.methods
+      .withdraw(expectedToken0Receive, expectedToken1Receive, withdrawLiquidity)
+      .accountsPartial({
+        pool: poolPda,
+        ammConfig: ammConfig.publicKey,
+
+        lp: yash.publicKey,
+        lpMint: lpMintPda,
+        lpTokenAta: yashLpMintAta,
+
+        mint0: mint0.publicKey,
+        lpToken0: yashMint0Ata,
+        token0Vault: token0Vault,
+        token0Program: TOKEN_PROGRAM_ID,
+
+        mint1: mint1.publicKey,
+        lpToken1: yashMint1Ata,
+        token1Vault: token1Vault,
+        token1Program: TOKEN_2022_PROGRAM_ID,
+      })
+      .signers([yash])
+      .rpc();
+
+    const poolStateAfter = await program.account.pool.fetch(poolPda);
+    assert(
+      new BN(poolStateAfter.lpSupply).eq(
+        new BN(poolBefore.lpSupply).sub(new BN(withdrawLiquidity)),
+      ),
+    );
+    const {
+      value: { amount: yashLpAtaBalanceAfter },
+    } = await connection.getTokenAccountBalance(yashLpMintAta);
+
+    const {
+      value: { amount: yashToken0BalanceAfter },
+    } = await connection.getTokenAccountBalance(yashMint0Ata);
+    const {
+      value: { amount: yashToken1BalanceAfter },
+    } = await connection.getTokenAccountBalance(yashMint1Ata);
+
+    const {
+      value: { amount: token0VaultBalanceAfter },
+    } = await connection.getTokenAccountBalance(token0Vault);
+
+    const {
+      value: { amount: token1VaultBalanceAfter },
+    } = await connection.getTokenAccountBalance(token1Vault);
+
+    assert(
+      new BN(token0VaultBalanceBefore)
+        .sub(new BN(token0VaultBalanceAfter))
+        .eq(new BN(expectedToken0PoolSend)),
+    );
+
+    assert(
+      new BN(token1VaultBalanceBefore)
+        .sub(new BN(token1VaultBalanceAfter))
+        .eq(new BN(expectedToken1PoolSend)),
+    );
+    assert(
+      new BN(yashLpAtaBalanceBefore)
+        .sub(new BN(yashLpAtaBalanceAfter))
+        .eq(new BN(withdrawLiquidity)),
+    );
+    assert(
+      new BN(yashToken0BalanceAfter)
+        .sub(new BN(yashToken0BalanceBefore))
+        .eq(new BN(expectedToken0Receive)),
+    );
+    assert(
+      new BN(yashToken1BalanceAfter)
+        .sub(new BN(yashToken1BalanceBefore))
+        .eq(new BN(expectedToken1Receive)),
+    );
+  });
+
+  it("Yash then doubles the liquidity", async () => {
+    const poolBefore = await program.account.pool.fetch(poolPda);
+    const reqLpTokens = poolBefore.lpSupply;
+    const {
+      value: { amount: yashLpAtaBalanceBefore },
+    } = await connection.getTokenAccountBalance(yashLpMintAta);
+    const {
+      value: { amount: yashToken0BalanceBefore },
+    } = await connection.getTokenAccountBalance(yashMint0Ata);
+    const {
+      value: { amount: yashToken1BalanceBefore },
+    } = await connection.getTokenAccountBalance(yashMint1Ata);
+
+    const {
+      value: { amount: token0VaultBalanceBefore },
+    } = await connection.getTokenAccountBalance(token0Vault);
+
+    const {
+      value: { amount: token1VaultBalanceBefore },
+    } = await connection.getTokenAccountBalance(token1Vault);
+
+    const expectedToken0PoolReceive = divCeil(
+      new BN(reqLpTokens).mul(new BN(token0VaultBalanceBefore)),
+      new BN(poolBefore.lpSupply),
+    );
+    const expectedToken0YashSend = expectedToken0PoolReceive;
+
+    const expectedToken1PoolReceive = divCeil(
+      new BN(reqLpTokens).mul(new BN(token1VaultBalanceBefore)),
+      new BN(poolBefore.lpSupply),
+    );
+    let mint1Account = await getMint(
+      connection,
+      mint1.publicKey,
+      undefined,
+      TOKEN_2022_PROGRAM_ID,
+    );
+
+    const mint1TransferFeeConfig = getTransferFeeConfig(mint1Account);
+
+    const expectedToken1YashSend = await calculatePreTransferAmount(
+      mint1TransferFeeConfig,
+      expectedToken1PoolReceive,
+    );
+    await program.methods
+      .deposit(expectedToken0YashSend, expectedToken1YashSend, reqLpTokens)
+      .accountsPartial({
+        pool: poolPda,
+        ammConfig: ammConfig.publicKey,
+
+        lp: yash.publicKey,
+        lpMint: lpMintPda,
+        lpTokenAta: yashLpMintAta,
+
+        mint0: mint0.publicKey,
+        lpToken0: yashMint0Ata,
+        token0Program: TOKEN_PROGRAM_ID,
+
+        mint1: mint1.publicKey,
+        lpToken1: yashMint1Ata,
+        token1Program: TOKEN_2022_PROGRAM_ID,
+
+        token0Vault: token0Vault,
+        token1Vault: token1Vault,
+      })
+      .signers([yash])
+      .rpc();
+
+    const poolStateAfter = await program.account.pool.fetch(poolPda);
+    assert(
+      new BN(poolStateAfter.lpSupply).eq(
+        new BN(poolBefore.lpSupply).add(new BN(reqLpTokens)),
+      ),
+    );
+
+    const {
+      value: { amount: yashLpAtaBalanceAfter },
+    } = await connection.getTokenAccountBalance(yashLpMintAta);
+
+    const {
+      value: { amount: yashToken0BalanceAfter },
+    } = await connection.getTokenAccountBalance(yashMint0Ata);
+    const {
+      value: { amount: yashToken1BalanceAfter },
+    } = await connection.getTokenAccountBalance(yashMint1Ata);
+
+    const {
+      value: { amount: token0VaultBalanceAfter },
+    } = await connection.getTokenAccountBalance(token0Vault);
+
+    const {
+      value: { amount: token1VaultBalanceAfter },
+    } = await connection.getTokenAccountBalance(token1Vault);
+
+    assert(
+      new BN(token0VaultBalanceAfter)
+        .sub(new BN(token0VaultBalanceBefore))
+        .eq(new BN(expectedToken0PoolReceive)),
+    );
+
+    assert(
+      new BN(token1VaultBalanceAfter)
+        .sub(new BN(token1VaultBalanceBefore))
+        .eq(new BN(expectedToken1PoolReceive)),
+    );
+
+    assert(
+      new BN(yashLpAtaBalanceAfter)
+        .sub(new BN(yashLpAtaBalanceBefore))
+        .eq(new BN(reqLpTokens)),
+    );
+    assert(
+      new BN(yashToken0BalanceBefore)
+        .sub(new BN(yashToken0BalanceAfter))
+        .eq(new BN(expectedToken0YashSend)),
+    );
+    assert(
+      new BN(yashToken1BalanceBefore)
+        .sub(new BN(yashToken1BalanceAfter))
+        .eq(new BN(expectedToken1YashSend)),
+    );
+  });
 
   it("3) Swapping 100 mint0 for mint1 ", async () => {
     await program.methods
@@ -332,91 +668,64 @@ describe("cpmm", () => {
       .rpc();
   });
 
-  it("Swap mint0 for 100 mint1", async () => {
-    let {
-      value: { amount: yashToken0BalanceBefore },
-    } = await connection.getTokenAccountBalance(yashMint0Ata);
+  // it("Swap mint0 for 100 mint1", async () => {
+  //   let {
+  //     value: { amount: yashToken0BalanceBefore },
+  //   } = await connection.getTokenAccountBalance(yashMint0Ata);
 
-    await program.methods
-      .swapBaseReceive(
-        new anchor.BN(100),
-        new anchor.BN(yashToken0BalanceBefore),
-      )
-      .accountsPartial({
-        sendMint: mint0.publicKey,
-        sendTokenProgram: TOKEN_PROGRAM_ID,
-        traderSendToken: yashMint0Ata,
-        trader: yash.publicKey,
-        traderReceiveToken: yashMint1Ata,
-        receiveMint: mint1.publicKey,
-        receiveTokenProgram: TOKEN_2022_PROGRAM_ID,
-        ammConfig: ammConfig.publicKey,
-        pool: poolPda,
-        sendTokenVault: token0Vault,
-        receiveTokenVault: token1Vault,
-      })
-      .signers([yash])
-      .rpc();
-  });
+  //   await program.methods
+  //     .swapBaseReceive(
+  //       new anchor.BN(100),
+  //       new anchor.BN(yashToken0BalanceBefore),
+  //     )
+  //     .accountsPartial({
+  //       sendMint: mint0.publicKey,
+  //       sendTokenProgram: TOKEN_PROGRAM_ID,
+  //       traderSendToken: yashMint0Ata,
+  //       trader: yash.publicKey,
+  //       traderReceiveToken: yashMint1Ata,
+  //       receiveMint: mint1.publicKey,
+  //       receiveTokenProgram: TOKEN_2022_PROGRAM_ID,
+  //       ammConfig: ammConfig.publicKey,
+  //       pool: poolPda,
+  //       sendTokenVault: token0Vault,
+  //       receiveTokenVault: token1Vault,
+  //     })
+  //     .signers([yash])
+  //     .rpc();
+  // });
 
-  it("Deposit liquidity", async () => {
-    let {
-      value: { amount: yashToken0BalanceBefore },
-    } = await connection.getTokenAccountBalance(yashMint0Ata);
+  // it("Deposit liquidity", async () => {
+  //   let {
+  //     value: { amount: yashToken0BalanceBefore },
+  //   } = await connection.getTokenAccountBalance(yashMint0Ata);
 
-    let {
-      value: { amount: yashToken1BalanceBefore },
-    } = await connection.getTokenAccountBalance(yashMint1Ata);
+  //   let {
+  //     value: { amount: yashToken1BalanceBefore },
+  //   } = await connection.getTokenAccountBalance(yashMint1Ata);
 
-    let pool = await program.account.pool.fetch(poolPda);
-    console.log("yashToken0BalanceBefore", yashToken0BalanceBefore);
-    console.log("yashToken1BalanceBefore", yashToken1BalanceBefore);
-    await program.methods
-      .deposit(
-        new anchor.BN(yashToken0BalanceBefore),
-        new anchor.BN(yashToken1BalanceBefore),
-        new anchor.BN(1),
-      )
-      .accountsPartial({
-        lp: yash.publicKey,
-        lpToken0: yashMint0Ata,
-        lpToken1: yashMint1Ata,
-        pool: poolPda,
-        token0Vault: token0Vault,
-        token1Vault: token1Vault,
-        lpMint: lpMintPda,
-        ammConfig: ammConfig.publicKey,
-        mint0: mint0.publicKey,
-        token0Program: TOKEN_PROGRAM_ID,
-        mint1: mint1.publicKey,
-        token1Program: TOKEN_2022_PROGRAM_ID,
-      })
-      .signers([yash])
-      .rpc();
-  });
-
-  it("Withdraw liquidity", async () => {
-    let {
-      value: { amount: lpTokenBalanceBefore },
-    } = await connection.getTokenAccountBalance(yashLpTokenAta);
-
-    await program.methods
-      .withdraw(new anchor.BN(0), new anchor.BN(0), new anchor.BN(1))
-      .accountsPartial({
-        lp: yash.publicKey,
-        lpToken0: yashMint0Ata,
-        lpToken1: yashMint1Ata,
-        pool: poolPda,
-        token0Vault: token0Vault,
-        token1Vault: token1Vault,
-        lpMint: lpMintPda,
-        ammConfig: ammConfig.publicKey,
-        mint0: mint0.publicKey,
-        token0Program: TOKEN_PROGRAM_ID,
-        mint1: mint1.publicKey,
-        token1Program: TOKEN_2022_PROGRAM_ID,
-      })
-      .signers([yash])
-      .rpc();
-  });
+  //   let pool = await program.account.pool.fetch(poolPda);
+  //   await program.methods
+  //     .deposit(
+  //       new anchor.BN(yashToken0BalanceBefore),
+  //       new anchor.BN(yashToken1BalanceBefore),
+  //       new anchor.BN(1),
+  //     )
+  //     .accountsPartial({
+  //       lp: yash.publicKey,
+  //       lpToken0: yashMint0Ata,
+  //       lpToken1: yashMint1Ata,
+  //       pool: poolPda,
+  //       token0Vault: token0Vault,
+  //       token1Vault: token1Vault,
+  //       lpMint: lpMintPda,
+  //       ammConfig: ammConfig.publicKey,
+  //       mint0: mint0.publicKey,
+  //       token0Program: TOKEN_PROGRAM_ID,
+  //       mint1: mint1.publicKey,
+  //       token1Program: TOKEN_2022_PROGRAM_ID,
+  //     })
+  //     .signers([yash])
+  //     .rpc();
+  // });
 });

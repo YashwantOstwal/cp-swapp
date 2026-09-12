@@ -1,4 +1,6 @@
-use anchor_lang::prelude::*;
+use std::ops::Div;
+
+use anchor_lang::prelude::{borsh::de, *};
 use anchor_spl::token_2022::spl_token_2022::extension::transfer_fee::MAX_FEE_BASIS_POINTS;
 #[account]
 #[derive(InitSpace,Debug)]
@@ -12,13 +14,13 @@ pub struct AmmConfig {
 impl AmmConfig {
     pub const LEN:usize = 8 + AmmConfig::INIT_SPACE;
 
-    fn ceil_div(numerator:u64,denominator:u64) -> u64 {
-        return numerator.checked_add(denominator).unwrap().checked_sub(1).unwrap().checked_div(denominator).unwrap()
-    }
+    // fn ceil_div(numerator:u64,denominator:u64) -> u64 {
+    //     return numerator.checked_add(denominator).unwrap().checked_sub(1).unwrap().checked_div(denominator).unwrap()
+    // }
 
     pub fn calculate_fee(&self,pre_fee_amount:u64) -> u64 {
         let numerator = pre_fee_amount.checked_mul(self.swap_fee_rate_in_bps.into()).unwrap();
-        return Self::ceil_div(numerator,MAX_FEE_BASIS_POINTS as u64)
+        numerator.div_ceil(MAX_FEE_BASIS_POINTS as u64)
     }
 
     pub fn calculate_post_fee_amount(&self,pre_fee_amount:u64) -> u64 {
@@ -27,8 +29,8 @@ impl AmmConfig {
 
     pub fn calculate_pre_fee_amount(&self,post_fee_amount:u64) -> u64 {
         let numerator = post_fee_amount.checked_mul(MAX_FEE_BASIS_POINTS as u64).unwrap();
-        let denominator = (MAX_FEE_BASIS_POINTS as u64).checked_sub(self.swap_fee_rate_in_bps.into()).unwrap();
-        Self::ceil_div(numerator, denominator)
+        let denominator = (MAX_FEE_BASIS_POINTS as u64).checked_sub(self.swap_fee_rate_in_bps.into()).unwrap(); // will always be greater than 0
+        numerator.div_ceil(denominator)
     }
 
     pub fn calculate_inverse_fee(&self,post_fee_amount:u64) -> u64 {
