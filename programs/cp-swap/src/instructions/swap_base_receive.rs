@@ -79,23 +79,28 @@ pub fn handle_swap_base_receive(ctx:Context<SwapBaseReceive>,exact_amount_trader
         }
     };
 
+    msg!("exact_amount_pool_send: {}",exact_amount_pool_send);
     let amm_config = &ctx.accounts.amm_config;
     let curve_receive_amount = if amm_config.is_fee_side_receive {
         amm_config.calculate_pre_fee_amount(exact_amount_pool_send)
     }else {
         exact_amount_pool_send
     };
+    msg!("curve_receive_amount: {}",curve_receive_amount);
 
-    let send_reserve = ctx.accounts.send_mint.supply;
-    let receive_reserve = ctx.accounts.receive_mint.supply;
+    let send_reserve = ctx.accounts.send_token_vault.amount;
+    let receive_reserve = ctx.accounts.receive_token_vault.amount;
     let k = CurveMath::calculate_k(send_reserve, receive_reserve);
     let curve_input_amount = CurveMath::calculate_curve_input_amount(send_reserve, receive_reserve, receive_reserve.checked_sub(curve_receive_amount).unwrap());
+    msg!("curve_input_amount: {}",curve_input_amount);
+    msg!("k: {}",k);
 
     let exact_amount_pool_receive  = if !amm_config.is_fee_side_receive {
         amm_config.calculate_pre_fee_amount(curve_input_amount)
     }else {
         curve_input_amount
     };
+    msg!("exact_amount_pool_receive: {}",exact_amount_pool_receive);
 
     let exact_amount_trader_send = if ctx.accounts.send_token_program.key() == Token::id() {
         exact_amount_pool_receive
@@ -112,6 +117,7 @@ pub fn handle_swap_base_receive(ctx:Context<SwapBaseReceive>,exact_amount_trader
             exact_amount_pool_receive
         }
     };
+    msg!("exact_amount_trader_send: {}",exact_amount_trader_send);
 
     require!(exact_amount_trader_send <= max_amount_trader_send,ErrorCode::ExceedsMaximumLimit);
 
@@ -143,7 +149,9 @@ pub fn handle_swap_base_receive(ctx:Context<SwapBaseReceive>,exact_amount_trader
     let new_x = ctx.accounts.send_token_vault.amount;
     let new_y = ctx.accounts.receive_token_vault.amount;
     let new_k = CurveMath::calculate_k(new_x, new_y);
-    // require!(k <= new_k,ErrorCode::ConstantProductInvariantFailed);
+    require!(k <= new_k,ErrorCode::ConstantProductInvariantFailed);
+    msg!("new_k: {}",new_k);
+    
 
     Ok(())
 }

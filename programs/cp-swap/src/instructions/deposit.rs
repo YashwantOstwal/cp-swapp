@@ -97,8 +97,8 @@ pub fn handle_deposit(ctx:Context<Deposit>,max_amount_0_lp_send:u64,max_amount_1
     let token_1_vault = &ctx.accounts.token_1_vault;
     let pool = &ctx.accounts.pool;
 
-    let exact_amount_0_pool_must_receive = req_lp_tokens.checked_mul(token_0_vault.amount).unwrap().div_ceil(pool.lp_supply);
-    let exact_amount_1_pool_must_receive = req_lp_tokens.checked_mul(token_1_vault.amount).unwrap().div_ceil(pool.lp_supply);
+    let exact_amount_0_pool_must_receive = (req_lp_tokens as u128).checked_mul(token_0_vault.amount.into()).unwrap().div_ceil(pool.lp_supply.into()) as u64;
+    let exact_amount_1_pool_must_receive = (req_lp_tokens as u128).checked_mul(token_1_vault.amount.into()).unwrap().div_ceil(pool.lp_supply.into()) as u64;
 
     let mint_0 = &ctx.accounts.mint_0;
     let mint_0_info = mint_0.to_account_info();

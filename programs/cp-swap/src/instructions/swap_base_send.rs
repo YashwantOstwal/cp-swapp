@@ -81,22 +81,30 @@ pub fn handle_swap_base_send(ctx:Context<SwapBaseSend>,exact_amount_user_send:u6
             exact_amount_user_send
         }
     };
+
+    msg!("exact_amount_pool_receive: {}",exact_amount_pool_receive);
     let amm_config = &ctx.accounts.amm_config;
     let curve_send_amount = if !amm_config.is_fee_side_receive {
         amm_config.calculate_post_fee_amount(exact_amount_pool_receive)
     }else {
         exact_amount_pool_receive
     };
+    msg!("curve_send_amount: {}",curve_send_amount);
 
     let x = ctx.accounts.send_token_vault.amount;
     let y = ctx.accounts.receive_token_vault.amount;
     let k = CurveMath::calculate_k(x, y);
+    msg!("k: {}",k);
+
     let curve_output_amount = CurveMath::calculate_curve_output_amount(x, y, x.checked_add(curve_send_amount).unwrap());
+    msg!("curve_output_amount: {}",curve_output_amount); 
+
     let exact_amount_pool_send = if amm_config.is_fee_side_receive {
         amm_config.calculate_post_fee_amount(curve_output_amount)
     }else {
         curve_output_amount
     };
+    msg!("exact_amount_pool_send: {}",exact_amount_pool_send);
 
     let receive_mint = &ctx.accounts.receive_mint;
     let exact_amount_user_receive = if ctx.accounts.receive_token_program.key() == Token::id() {
@@ -113,8 +121,9 @@ pub fn handle_swap_base_send(ctx:Context<SwapBaseSend>,exact_amount_user_send:u6
             exact_amount_pool_send
         }
     };
-
+    
     require!(exact_amount_user_receive >= min_amount_user_receive,ErrorCode::NotMinimumReceiveAmount);
+    msg!("exact_amount_user_receive: {}",exact_amount_user_receive);
 
     let user_send_ctx = CpiContext::new(ctx.accounts.send_token_program.key(),TransferChecked {
         mint:send_mint.to_account_info(),
@@ -146,7 +155,9 @@ pub fn handle_swap_base_send(ctx:Context<SwapBaseSend>,exact_amount_user_send:u6
 
     let new_x = ctx.accounts.send_token_vault.amount;
     let new_y = ctx.accounts.receive_token_vault.amount;
-    let new_k = new_x.checked_mul(new_y).unwrap();
+    let new_k = CurveMath::calculate_k(new_x, new_y);
+
+    msg!("new_k: {}",new_k);
 
     require!(k <= new_k,ErrorCode::ConstantProductInvariantFailed);
     Ok(())

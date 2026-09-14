@@ -93,7 +93,7 @@ pub fn handle_withdraw(ctx:Context<Withdraw>,min_amount_0_lp_receive:u64,min_amo
     let pool_seeds:&[&[u8]] = &[Pool::STATIC_SEED,pool.amm_config.as_ref(),pool.mint_0.as_ref(),pool.mint_1.as_ref(),&[pool.bump]];
     let signer_seeds  = [&pool_seeds[..]];
     
-    let exact_amount_0_pool_must_send = dilute_lp_tokens.checked_mul(ctx.accounts.token_0_vault.amount).unwrap().checked_div(pool.lp_supply).unwrap();
+    let exact_amount_0_pool_must_send = (dilute_lp_tokens as u128).checked_mul(ctx.accounts.token_0_vault.amount.into()).unwrap().checked_div(pool.lp_supply.into()).unwrap() as u64;
 
     let mint_0 = &ctx.accounts.mint_0;
     let mint_0_info = mint_0.to_account_info();
@@ -112,7 +112,7 @@ pub fn handle_withdraw(ctx:Context<Withdraw>,min_amount_0_lp_receive:u64,min_amo
     };
     require!(min_amount_0_lp_receive <= exact_amount_0_lp_receive,ErrorCode::NotMinimumReceiveAmount);
 
-    let exact_amount_1_pool_must_send = dilute_lp_tokens.checked_mul(ctx.accounts.token_1_vault.amount).unwrap().checked_div(pool.lp_supply).unwrap();
+    let exact_amount_1_pool_must_send = (dilute_lp_tokens as u128).checked_mul(ctx.accounts.token_1_vault.amount.into()).unwrap().checked_div(pool.lp_supply.into()).unwrap() as u64;
 
     let mint_1 = &ctx.accounts.mint_1;
     let mint_1_info = mint_1.to_account_info();

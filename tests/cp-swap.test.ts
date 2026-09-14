@@ -73,11 +73,11 @@ describe("cpmm", () => {
   });
 
   let ammConfig = new Keypair();
-  it("Create and update an Amm config.", async () => {
+  it("Creating and updating Amm config.", async () => {
     await program.methods
       .createAmmConfig({
         disableCreatePool: false,
-        swapFeeRateInBps: 3, // 0.03%
+        swapFeeRateInBps: 5, // 0.05%
         updateAuthority: yash.publicKey,
         isFeeSideReceive: false,
       })
@@ -92,13 +92,15 @@ describe("cpmm", () => {
       ammConfig.publicKey,
     );
     assert.equal(ammConfigData.disableCreatePool, false);
-    assert.equal(ammConfigData.swapFeeRateInBps, 3);
+    assert.equal(ammConfigData.isFeeSideReceive, false);
+    assert.equal(ammConfigData.swapFeeRateInBps, 5);
     assert(ammConfigData.updateAuthority.equals(yash.publicKey));
 
     await program.methods
       .updateAmmConfig({
         ...ammConfigData,
-        updateAuthority: null,
+        swapFeeRateInBps: 3, // 0.03%
+        // disableCreatePool: true,
       })
       .accounts({
         ammConfig: ammConfig.publicKey,
@@ -111,8 +113,9 @@ describe("cpmm", () => {
       ammConfig.publicKey,
     );
     assert.equal(ammConfigData2.disableCreatePool, false);
+    assert.equal(ammConfigData2.isFeeSideReceive, false);
     assert.equal(ammConfigData2.swapFeeRateInBps, 3);
-    assert.equal(ammConfigData2.updateAuthority, null);
+    assert(ammConfigData2.updateAuthority.equals(yash.publicKey));
   });
 
   let mint0 = new Keypair();
@@ -202,19 +205,24 @@ describe("cpmm", () => {
       return preFeeAmount;
     }
   }
-  const mint0Decimals = 3;
-  const mint1Decimals = 6;
-  const initAmount0 = 1_000;
-  const grossAmount0 = initAmount0; // 10000/10.000 tokens
-  const initAmount1 = 1000_000000;
-  const transferFeeBasisPoints1 = 5; // 0.05%
-  const maxFees1 = 1_000000; // 1 token
-  const grossAmount1 = Math.min(
-    Math.ceil((initAmount1 * 10000) / (10000 - 5)),
-    initAmount1 + 1000000,
-  ); // max(1000500251,1001000000)  = 1000500251/1000.500251 tokens
+  const mint0Decimals = 6;
+  const mint1Decimals = 9;
+  const initAmount0 = 1000_000000;
+  const grossAmount0 = initAmount0; // 1000 tokens.
 
-  const expectedLiquidity = 1000000; // sqrt(1_000 * 1000_000000)
+  const initAmount1 = 1_000000000; // 1 token.
+  const transferFeeBasisPoints1 = 5; // 0.05%
+  const maxFees1 = 10000000; // 0.01 token
+
+  const grossAmount1 = Math.min(
+    Math.ceil(
+      (initAmount1 * MAX_FEE_BASIS_POINTS) /
+        (MAX_FEE_BASIS_POINTS - transferFeeBasisPoints1),
+    ),
+    initAmount1 + maxFees1,
+  ); // min(1000500251,1010000000)  = 1000500251
+
+  const expectedLiquidity = Math.floor(Math.sqrt(initAmount0 * initAmount1)); // sqrt(10_000000 * 1000_000000000)
   it("2) Creating a CPMM pool for a token and token-2022 mints referencing the previously created AMM config.", async () => {
     await createMint(
       connection,
@@ -240,7 +248,7 @@ describe("cpmm", () => {
         mint1.publicKey,
         mint1.publicKey,
         mint1.publicKey,
-        transferFeeBasisPoints1, // Transfer fees of 0.05% upto 1 token.
+        transferFeeBasisPoints1, // Transfer fees of 0.05% upto 0.01 token.
         BigInt(maxFees1),
       ),
       createInitializeMint2Instruction(
@@ -295,7 +303,7 @@ describe("cpmm", () => {
       mint0.publicKey,
       yashMint0Ata,
       mint0,
-      1000000 * Math.pow(10, mint1Decimals),
+      1000000 * Math.pow(10, mint0Decimals),
     );
 
     await mintTo(
@@ -351,17 +359,14 @@ describe("cpmm", () => {
     assert.equal(poolData.bump, poolBump);
     assert.equal(poolData.lpMintBump, lpMintBump);
 
-    const liquidity = Math.sqrt(initAmount0 * initAmount1);
+    const liquidity = Math.floor(Math.sqrt(initAmount0 * initAmount1));
     assert.equal(expectedLiquidity, liquidity);
-    assert.equal(
-      poolData.lpSupply.toNumber(),
-      Math.sqrt(initAmount0 * initAmount1),
-    );
+    assert.equal(poolData.lpSupply.toNumber(), liquidity);
     let {
-      value: { amount: yashLpTokenBalance },
+      value: { amount: yashLpTokenBalanceAfter },
     } = await connection.getTokenAccountBalance(yashLpMintAta);
 
-    assert(new anchor.BN(yashLpTokenBalance).eqn(liquidity - 100));
+    assert(new anchor.BN(yashLpTokenBalanceAfter).eq(new BN(liquidity - 100)));
 
     let {
       value: { amount: yashMint0AtaBalanceAfter },
@@ -384,6 +389,7 @@ describe("cpmm", () => {
     );
   });
 
+  // Wrong
   // Current state:
   // Initialised a pool with mint0 (3 decimals) and mint1 (6 decimals) with the pool state to be:
 
@@ -417,6 +423,7 @@ describe("cpmm", () => {
       value: { amount: token1VaultBalanceBefore },
     } = await connection.getTokenAccountBalance(token1Vault);
 
+    console.log(token0VaultBalanceBefore, token1VaultBalanceBefore);
     const poolBefore = await program.account.pool.fetch(poolPda);
 
     const expectedToken0PoolSend = new BN(withdrawLiquidity)
@@ -525,7 +532,7 @@ describe("cpmm", () => {
     );
   });
 
-  it("Yash then doubles the liquidity", async () => {
+  it("Yash then doubles the total liquidity", async () => {
     const poolBefore = await program.account.pool.fetch(poolPda);
     const reqLpTokens = poolBefore.lpSupply;
     const {
@@ -647,85 +654,302 @@ describe("cpmm", () => {
         .eq(new BN(expectedToken1YashSend)),
     );
   });
+  it("3) Yash swaps exact 5.00000 mint0 tokens for a minimum of 0.004971152 mint1 tokens, Swap fee charged on the send side (mint0)", async () => {
+    const { isFeeSideReceive } = await program.account.ammConfig.fetch(
+      ammConfig.publicKey,
+    );
+    assert(!isFeeSideReceive); // Fee side = Send.
 
-  it("3) Swapping 100 mint0 for mint1 ", async () => {
-    await program.methods
-      .swapBaseSend(new anchor.BN(100), new anchor.BN(0))
+    const {
+      value: { amount: yashLpAtaBalanceBefore },
+    } = await connection.getTokenAccountBalance(yashLpMintAta);
+    const {
+      value: { amount: yashToken0BalanceBefore },
+    } = await connection.getTokenAccountBalance(yashMint0Ata);
+    const {
+      value: { amount: yashToken1BalanceBefore },
+    } = await connection.getTokenAccountBalance(yashMint1Ata);
+
+    const {
+      value: { amount: token0VaultBalanceBefore },
+    } = await connection.getTokenAccountBalance(token0Vault);
+
+    const {
+      value: { amount: token1VaultBalanceBefore },
+    } = await connection.getTokenAccountBalance(token1Vault);
+
+    const signature = await program.methods
+      .swapBaseSend(new anchor.BN(5000000), new anchor.BN(4971152))
       .accountsPartial({
-        sendMint: mint0.publicKey,
-        sendTokenProgram: TOKEN_PROGRAM_ID,
-        traderSendToken: yashMint0Ata,
-        trader: yash.publicKey,
-        traderReceiveToken: yashMint1Ata,
-        receiveMint: mint1.publicKey,
-        receiveTokenProgram: TOKEN_2022_PROGRAM_ID,
-        ammConfig: ammConfig.publicKey,
         pool: poolPda,
+        ammConfig: ammConfig.publicKey,
+
+        trader: yash.publicKey,
+
+        sendMint: mint0.publicKey,
         sendTokenVault: token0Vault,
+        traderSendToken: yashMint0Ata,
+        sendTokenProgram: TOKEN_PROGRAM_ID,
+
+        receiveMint: mint1.publicKey,
         receiveTokenVault: token1Vault,
+        traderReceiveToken: yashMint1Ata,
+        receiveTokenProgram: TOKEN_2022_PROGRAM_ID,
       })
       .signers([yash])
       .rpc();
+
+    // const txn = await connection.getTransaction(signature, {
+    //   commitment: "confirmed",
+    // });
+    // console.log(txn.meta.logMessages);
+    const poolAfter = await program.account.pool.fetch(poolPda);
+    const {
+      value: { amount: yashLpAtaBalanceAfter },
+    } = await connection.getTokenAccountBalance(yashLpMintAta);
+    const {
+      value: { amount: yashToken0BalanceAfter },
+    } = await connection.getTokenAccountBalance(yashMint0Ata);
+    const {
+      value: { amount: yashToken1BalanceAfter },
+    } = await connection.getTokenAccountBalance(yashMint1Ata);
+
+    const {
+      value: { amount: token0VaultBalanceAfter },
+    } = await connection.getTokenAccountBalance(token0Vault);
+
+    const {
+      value: { amount: token1VaultBalanceAfter },
+    } = await connection.getTokenAccountBalance(token1Vault);
+  });
+  it("3) Yash swaps a maximum of 50.093024 mint0 tokens for exact 0.005000000 mint1 tokens, Swap fee charged on the send side (mint0)", async () => {
+    const { isFeeSideReceive } = await program.account.ammConfig.fetch(
+      ammConfig.publicKey,
+    );
+    assert(!isFeeSideReceive); // Fee side = Send.
+
+    const {
+      value: { amount: yashLpAtaBalanceBefore },
+    } = await connection.getTokenAccountBalance(yashLpMintAta);
+    const {
+      value: { amount: yashToken0BalanceBefore },
+    } = await connection.getTokenAccountBalance(yashMint0Ata);
+    const {
+      value: { amount: yashToken1BalanceBefore },
+    } = await connection.getTokenAccountBalance(yashMint1Ata);
+
+    const {
+      value: { amount: token0VaultBalanceBefore },
+    } = await connection.getTokenAccountBalance(token0Vault);
+
+    const {
+      value: { amount: token1VaultBalanceBefore },
+    } = await connection.getTokenAccountBalance(token1Vault);
+
+    const signature = await program.methods
+      .swapBaseReceive(new anchor.BN(5000000), new anchor.BN(50093024))
+      .accountsPartial({
+        pool: poolPda,
+        ammConfig: ammConfig.publicKey,
+
+        trader: yash.publicKey,
+
+        traderSendToken: yashMint0Ata,
+        sendTokenVault: token0Vault,
+        sendMint: mint0.publicKey,
+        sendTokenProgram: TOKEN_PROGRAM_ID,
+
+        traderReceiveToken: yashMint1Ata,
+        receiveTokenVault: token1Vault,
+        receiveMint: mint1.publicKey,
+        receiveTokenProgram: TOKEN_2022_PROGRAM_ID,
+      })
+      .signers([yash])
+      .rpc();
+
+    // const txn = await connection.getTransaction(signature, {
+    //   commitment: "confirmed",
+    // });
+    // console.log(txn.meta.logMessages);
+    const poolAfter = await program.account.pool.fetch(poolPda);
+    const {
+      value: { amount: yashLpAtaBalanceAfter },
+    } = await connection.getTokenAccountBalance(yashLpMintAta);
+    const {
+      value: { amount: yashToken0BalanceAfter },
+    } = await connection.getTokenAccountBalance(yashMint0Ata);
+    const {
+      value: { amount: yashToken1BalanceAfter },
+    } = await connection.getTokenAccountBalance(yashMint1Ata);
+
+    const {
+      value: { amount: token0VaultBalanceAfter },
+    } = await connection.getTokenAccountBalance(token0Vault);
+
+    const {
+      value: { amount: token1VaultBalanceAfter },
+    } = await connection.getTokenAccountBalance(token1Vault);
   });
 
-  // it("Swap mint0 for 100 mint1", async () => {
-  //   let {
-  //     value: { amount: yashToken0BalanceBefore },
-  //   } = await connection.getTokenAccountBalance(yashMint0Ata);
+  it("3) Yash swaps exact 0.000500000 mint1 tokens for a minimum of 5.071615 mint0 tokens, Swap fee charged on the send side (mint1)", async () => {
+    const { isFeeSideReceive } = await program.account.ammConfig.fetch(
+      ammConfig.publicKey,
+    );
+    assert(!isFeeSideReceive); // Fee side = Send.
 
-  //   await program.methods
-  //     .swapBaseReceive(
-  //       new anchor.BN(100),
-  //       new anchor.BN(yashToken0BalanceBefore),
-  //     )
-  //     .accountsPartial({
-  //       sendMint: mint0.publicKey,
-  //       sendTokenProgram: TOKEN_PROGRAM_ID,
-  //       traderSendToken: yashMint0Ata,
-  //       trader: yash.publicKey,
-  //       traderReceiveToken: yashMint1Ata,
-  //       receiveMint: mint1.publicKey,
-  //       receiveTokenProgram: TOKEN_2022_PROGRAM_ID,
-  //       ammConfig: ammConfig.publicKey,
-  //       pool: poolPda,
-  //       sendTokenVault: token0Vault,
-  //       receiveTokenVault: token1Vault,
-  //     })
-  //     .signers([yash])
-  //     .rpc();
-  // });
+    const {
+      value: { amount: yashLpAtaBalanceBefore },
+    } = await connection.getTokenAccountBalance(yashLpMintAta);
+    const {
+      value: { amount: yashToken0BalanceBefore },
+    } = await connection.getTokenAccountBalance(yashMint0Ata);
+    const {
+      value: { amount: yashToken1BalanceBefore },
+    } = await connection.getTokenAccountBalance(yashMint1Ata);
 
-  // it("Deposit liquidity", async () => {
-  //   let {
-  //     value: { amount: yashToken0BalanceBefore },
-  //   } = await connection.getTokenAccountBalance(yashMint0Ata);
+    const {
+      value: { amount: token0VaultBalanceBefore },
+    } = await connection.getTokenAccountBalance(token0Vault);
 
-  //   let {
-  //     value: { amount: yashToken1BalanceBefore },
-  //   } = await connection.getTokenAccountBalance(yashMint1Ata);
+    const {
+      value: { amount: token1VaultBalanceBefore },
+    } = await connection.getTokenAccountBalance(token1Vault);
+    console.log({ token0VaultBalanceBefore, token1VaultBalanceBefore });
 
-  //   let pool = await program.account.pool.fetch(poolPda);
-  //   await program.methods
-  //     .deposit(
-  //       new anchor.BN(yashToken0BalanceBefore),
-  //       new anchor.BN(yashToken1BalanceBefore),
-  //       new anchor.BN(1),
-  //     )
-  //     .accountsPartial({
-  //       lp: yash.publicKey,
-  //       lpToken0: yashMint0Ata,
-  //       lpToken1: yashMint1Ata,
-  //       pool: poolPda,
-  //       token0Vault: token0Vault,
-  //       token1Vault: token1Vault,
-  //       lpMint: lpMintPda,
-  //       ammConfig: ammConfig.publicKey,
-  //       mint0: mint0.publicKey,
-  //       token0Program: TOKEN_PROGRAM_ID,
-  //       mint1: mint1.publicKey,
-  //       token1Program: TOKEN_2022_PROGRAM_ID,
-  //     })
-  //     .signers([yash])
-  //     .rpc();
-  // });
+    const signature = await program.methods
+      .swapBaseSend(new anchor.BN(5000000), new anchor.BN(5071615))
+      .accountsPartial({
+        pool: poolPda,
+        ammConfig: ammConfig.publicKey,
+
+        trader: yash.publicKey,
+
+        sendMint: mint1.publicKey,
+        sendTokenVault: token1Vault,
+        traderSendToken: yashMint1Ata,
+        sendTokenProgram: TOKEN_2022_PROGRAM_ID,
+
+        receiveMint: mint0.publicKey,
+        receiveTokenVault: token0Vault,
+        traderReceiveToken: yashMint0Ata,
+        receiveTokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .signers([yash])
+      .rpc();
+
+    // const txn = await connection.getTransaction(signature, {
+    //   commitment: "confirmed",
+    // });
+    // console.log(txn.meta.logMessages);
+    const poolAfter = await program.account.pool.fetch(poolPda);
+    const {
+      value: { amount: yashLpAtaBalanceAfter },
+    } = await connection.getTokenAccountBalance(yashLpMintAta);
+    const {
+      value: { amount: yashToken0BalanceAfter },
+    } = await connection.getTokenAccountBalance(yashMint0Ata);
+    const {
+      value: { amount: yashToken1BalanceAfter },
+    } = await connection.getTokenAccountBalance(yashMint1Ata);
+
+    const {
+      value: { amount: token0VaultBalanceAfter },
+    } = await connection.getTokenAccountBalance(token0Vault);
+
+    const {
+      value: { amount: token1VaultBalanceAfter },
+    } = await connection.getTokenAccountBalance(token1Vault);
+  });
+
+  it("3) Yash swaps a maximum of 0.004979050 mint1 tokens for a exact 5.000000 mint0 tokens, Swap fee charged on the send side (mint1)", async () => {
+    const { isFeeSideReceive } = await program.account.ammConfig.fetch(
+      ammConfig.publicKey,
+    );
+    assert(!isFeeSideReceive); // Fee side = Send.
+
+    const {
+      value: { amount: yashLpAtaBalanceBefore },
+    } = await connection.getTokenAccountBalance(yashLpMintAta);
+    const {
+      value: { amount: yashToken0BalanceBefore },
+    } = await connection.getTokenAccountBalance(yashMint0Ata);
+    const {
+      value: { amount: yashToken1BalanceBefore },
+    } = await connection.getTokenAccountBalance(yashMint1Ata);
+
+    const {
+      value: { amount: token0VaultBalanceBefore },
+    } = await connection.getTokenAccountBalance(token0Vault);
+
+    const {
+      value: { amount: token1VaultBalanceBefore },
+    } = await connection.getTokenAccountBalance(token1Vault);
+    // console.log({ token0VaultBalanceBefore, token1VaultBalanceBefore });
+
+    const signature = await program.methods
+      .swapBaseReceive(new anchor.BN(5000000), new anchor.BN(4979050))
+      .accountsPartial({
+        pool: poolPda,
+        ammConfig: ammConfig.publicKey,
+
+        trader: yash.publicKey,
+
+        traderSendToken: yashMint1Ata,
+        sendTokenVault: token1Vault,
+        sendMint: mint1.publicKey,
+        sendTokenProgram: TOKEN_2022_PROGRAM_ID,
+
+        traderReceiveToken: yashMint0Ata,
+        receiveTokenVault: token0Vault,
+        receiveMint: mint0.publicKey,
+        receiveTokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .signers([yash])
+      .rpc();
+
+    // const txn = await connection.getTransaction(signature, {
+    //   commitment: "confirmed",
+    // });
+    // console.log(txn.meta.logMessages);
+    const poolAfter = await program.account.pool.fetch(poolPda);
+    const {
+      value: { amount: yashLpAtaBalanceAfter },
+    } = await connection.getTokenAccountBalance(yashLpMintAta);
+    const {
+      value: { amount: yashToken0BalanceAfter },
+    } = await connection.getTokenAccountBalance(yashMint0Ata);
+    const {
+      value: { amount: yashToken1BalanceAfter },
+    } = await connection.getTokenAccountBalance(yashMint1Ata);
+
+    const {
+      value: { amount: token0VaultBalanceAfter },
+    } = await connection.getTokenAccountBalance(token0Vault);
+
+    const {
+      value: { amount: token1VaultBalanceAfter },
+    } = await connection.getTokenAccountBalance(token1Vault);
+  });
+
+  it(":", async () => {
+    await program.methods
+      .updateAmmConfig({
+        ...(await program.account.ammConfig.fetch(ammConfig.publicKey)),
+        isFeeSideReceive: true,
+      })
+      .accounts({
+        ammConfig: ammConfig.publicKey,
+        updateAuthority: yash.publicKey,
+      })
+      .signers([yash])
+      .rpc();
+
+    const ammConfigState = await program.account.ammConfig.fetch(
+      ammConfig.publicKey,
+    );
+    assert.equal(ammConfigState.disableCreatePool, false);
+    assert.equal(ammConfigState.isFeeSideReceive, true);
+    assert.equal(ammConfigState.swapFeeRateInBps, 3);
+    assert(ammConfigState.updateAuthority.equals(yash.publicKey));
+  });
 });
