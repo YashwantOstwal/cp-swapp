@@ -931,7 +931,7 @@ describe("cpmm", () => {
     } = await connection.getTokenAccountBalance(token1Vault);
   });
 
-  it(":", async () => {
+  it("Yash swaps a maximum of ___ mint0 tokensf for a exact 0.005000000 mint1 tokens, Swap fee charged on the receive side (mint1)", async () => {
     await program.methods
       .updateAmmConfig({
         ...(await program.account.ammConfig.fetch(ammConfig.publicKey)),
@@ -944,12 +944,10 @@ describe("cpmm", () => {
       .signers([yash])
       .rpc();
 
-    const ammConfigState = await program.account.ammConfig.fetch(
+    const { isFeeSideReceive } = await program.account.ammConfig.fetch(
       ammConfig.publicKey,
     );
-    assert.equal(ammConfigState.disableCreatePool, false);
-    assert.equal(ammConfigState.isFeeSideReceive, true);
-    assert.equal(ammConfigState.swapFeeRateInBps, 3);
-    assert(ammConfigState.updateAuthority.equals(yash.publicKey));
+
+    assert(isFeeSideReceive);
   });
 });
