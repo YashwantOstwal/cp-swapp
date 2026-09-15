@@ -151,7 +151,6 @@ pub fn handle_swap_base_receive(ctx:Context<SwapBaseReceive>,exact_amount_trader
     let new_k = CurveMath::calculate_k(new_x, new_y);
     require!(k <= new_k,ErrorCode::ConstantProductInvariantFailed);
     msg!("new_k: {}",new_k);
-    
 
     Ok(())
 }

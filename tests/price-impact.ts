@@ -1,32 +1,13 @@
 import * as anchor from "@anchor-lang/core";
 import { Program } from "@anchor-lang/core";
 import { CpSwap } from "../target/types/cp_swap";
+import { Keypair, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
 import {
-  Keypair,
-  LAMPORTS_PER_SOL,
-  PublicKey,
-  SystemProgram,
-  Transaction,
-} from "@solana/web3.js";
-import {
-  createInitializeMint2Instruction,
-  createInitializeTransferFeeConfigInstruction,
   createMint,
-  ExtensionType,
-  getMint,
-  getMintLen,
-  getExtensionData,
-  initializeMint2InstructionData,
-  TOKEN_2022_PROGRAM_ID,
-  TransferFeeConfig,
   createAssociatedTokenAccount,
   mintTo,
   TOKEN_PROGRAM_ID,
   getAssociatedTokenAddressSync,
-  getTransferFeeConfig,
-  calculateEpochFee,
-  getEpochFee,
-  MAX_FEE_BASIS_POINTS,
 } from "@solana/spl-token";
 import { assert } from "chai";
 
